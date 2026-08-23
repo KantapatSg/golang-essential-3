@@ -5,7 +5,6 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
-	gen "github.com/KantapatSg/golang-essential-3/contracts/gen/go"
 	taskv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/task/v1"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -19,6 +18,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +26,8 @@ import (
 
 //go:embed migrations/001_init.sql
 var migrationSQL string
+//go:embed migrations/002_indexes.sql
+var migration2SQL string
 
 type task struct {
 	ID                   string `gorm:"type:uuid;primaryKey"`
@@ -125,7 +127,7 @@ func (s *taskServer) GetTask(ctx context.Context, req *taskv1.GetTaskRequest) (*
 	var t task
 	var ok bool
 	if s.reader != nil {
-		e := s.reader.WithContext(ctx).First(&t, "id = ?", req.ID).Error
+		e := s.reader.WithContext(ctx).First(&t, "id = ?", req.Id).Error
 		if errors.Is(e, gorm.ErrRecordNotFound) {
 			return nil, status.Error(codes.NotFound, "task not found")
 		}
@@ -135,7 +137,7 @@ func (s *taskServer) GetTask(ctx context.Context, req *taskv1.GetTaskRequest) (*
 		ok = true
 	} else {
 		s.mu.RLock()
-		t, ok = s.data[req.ID]
+		t, ok = s.data[req.Id]
 		s.mu.RUnlock()
 	}
 	if !ok {
@@ -185,7 +187,7 @@ func (s *taskServer) UpdateTask(ctx context.Context, req *taskv1.UpdateTaskReque
 	}
 	var t task
 	if s.writer != nil {
-		if e := s.writer.WithContext(ctx).First(&t, "id = ?", req.ID).Error; e != nil {
+		if e := s.writer.WithContext(ctx).First(&t, "id = ?", req.Id).Error; e != nil {
 			if errors.Is(e, gorm.ErrRecordNotFound) {
 				return nil, status.Error(codes.NotFound, "task not found")
 			}
@@ -194,7 +196,7 @@ func (s *taskServer) UpdateTask(ctx context.Context, req *taskv1.UpdateTaskReque
 	} else {
 		s.mu.RLock()
 		var ok bool
-		t, ok = s.data[req.ID]
+		t, ok = s.data[req.Id]
 		s.mu.RUnlock()
 		if !ok {
 			return nil, status.Error(codes.NotFound, "task not found")
@@ -231,7 +233,7 @@ func (s *taskServer) DeleteTask(ctx context.Context, req *taskv1.DeleteTaskReque
 	u, r := actor(ctx)
 	var t task
 	if s.writer != nil {
-		if e := s.writer.WithContext(ctx).First(&t, "id = ?", req.ID).Error; e != nil {
+		if e := s.writer.WithContext(ctx).First(&t, "id = ?", req.Id).Error; e != nil {
 			if errors.Is(e, gorm.ErrRecordNotFound) {
 				return nil, status.Error(codes.NotFound, "task not found")
 			}
@@ -240,7 +242,7 @@ func (s *taskServer) DeleteTask(ctx context.Context, req *taskv1.DeleteTaskReque
 	} else {
 		s.mu.RLock()
 		var ok bool
-		t, ok = s.data[req.ID]
+		t, ok = s.data[req.Id]
 		s.mu.RUnlock()
 		if !ok {
 			return nil, status.Error(codes.NotFound, "task not found")
@@ -253,7 +255,7 @@ func (s *taskServer) DeleteTask(ctx context.Context, req *taskv1.DeleteTaskReque
 	if s.writer != nil {
 		b, _ := json.Marshal(event)
 		if e := s.writer.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			if e := tx.Delete(&task{}, "id = ?", req.ID).Error; e != nil {
+			if e := tx.Delete(&task{}, "id = ?", req.Id).Error; e != nil {
 				return e
 			}
 			return tx.Create(&outboxRow{EventID: event.EventID, EventType: event.EventType, Payload: string(b), OccurredAt: event.OccurredAt}).Error
@@ -262,7 +264,7 @@ func (s *taskServer) DeleteTask(ctx context.Context, req *taskv1.DeleteTaskReque
 		}
 	} else {
 		s.mu.Lock()
-		delete(s.data, req.ID)
+		delete(s.data, req.Id)
 		s.mu.Unlock()
 		s.enqueue(event)
 	}
@@ -289,7 +291,7 @@ func (s *taskServer) enqueue(e outboxEvent) {
 	}
 }
 func toProto(t task) *taskv1.Task {
-	return &taskv1.Task{ID: t.ID, OwnerID: t.OwnerID, Title: t.Title, Description: t.Description, Status: t.Status, CreatedAt: t.CreatedAt.Format(time.RFC3339), UpdatedAt: t.UpdatedAt.Format(time.RFC3339)}
+	return &taskv1.Task{Id: t.ID, OwnerId: t.OwnerID, Title: t.Title, Description: t.Description, Status: t.Status, CreatedAt: t.CreatedAt.Format(time.RFC3339), UpdatedAt: t.UpdatedAt.Format(time.RFC3339)}
 }
 func (s *taskServer) publishOutbox(ctx context.Context, brokers string) {
 	// Outbox worker แยก lifecycle จาก gRPC request: ผู้ใช้รอเพียง DB commit ส่วน Kafka retry ภายหลังได้
@@ -346,7 +348,7 @@ func openDB(ctx context.Context, dsn string) (*gorm.DB, error) {
 	return nil, errors.New("database unavailable")
 }
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 	wd := env("TASK_DB_WRITE_DSN", "")
 	rd := env("TASK_DB_READ_DSN", wd)
@@ -366,7 +368,7 @@ func main() {
 		if e != nil {
 			log.Fatal(e)
 		}
-		if e = writer.Exec(migrationSQL).Error; e != nil {
+		if e = runMigrations(writer, []string{migrationSQL, migration2SQL}); e != nil {
 			log.Fatal(e)
 		}
 	}
@@ -385,13 +387,21 @@ func main() {
 	}
 	s := &taskServer{data: map[string]task{}, cache: map[string][]task{}, outbox: make(chan outboxEvent, 128), writer: writer, reader: reader, redis: rc}
 	go s.publishOutbox(ctx, os.Getenv("KAFKA_BROKERS"))
-	g := grpc.NewServer(grpc.ForceServerCodec(gen.JSONCodec{}), grpc.UnaryInterceptor(deadlineInterceptor))
+	g := grpc.NewServer(grpc.UnaryInterceptor(deadlineInterceptor))
 	taskv1.RegisterTaskServiceServer(g, s)
 	go func() { <-ctx.Done(); g.GracefulStop() }()
 	log.Printf("task-service listening on %s", lis.Addr())
 	if e = g.Serve(lis); e != nil && !errors.Is(e, grpc.ErrServerStopped) {
 		log.Fatal(e)
 	}
+	if writer != nil { if db, err := writer.DB(); err == nil { _ = db.Close() } }
+	if reader != nil && reader != writer { if db, err := reader.DB(); err == nil { _ = db.Close() } }
+	if rc != nil { _ = rc.Close() }
+}
+func runMigrations(db *gorm.DB, migrations []string) error {
+	// แต่ละ bounded context เป็นเจ้าของ migration table ของตัวเอง; version ทำให้ startup ซ้ำได้และ audit schema ได้
+	if err := db.Exec("CREATE TABLE IF NOT EXISTS schema_migrations (version integer PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())").Error; err != nil { return err }
+	return db.Transaction(func(tx *gorm.DB) error { for i, sql := range migrations { if err := tx.Exec(sql).Error; err != nil { return err }; if err := tx.Exec("INSERT INTO schema_migrations(version) VALUES (?) ON CONFLICT DO NOTHING", i+1).Error; err != nil { return err } }; return nil })
 }
 func env(k, d string) string {
 	if v := os.Getenv(k); v != "" {

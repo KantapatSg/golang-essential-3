@@ -7,7 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
-	gen "github.com/KantapatSg/golang-essential-3/contracts/gen/go"
+	"fmt"
 	activityv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/activity/v1"
 	identityv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/identity/v1"
 	taskv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/task/v1"
@@ -53,7 +53,9 @@ func main() {
 	actAddr := env("ACTIVITY_ADDR", "localhost:50053")
 	// Gateway เป็น composition root: จุดนี้ประกอบ gRPC clients และ transport concerns
 	// โดยไม่ดึง business logic ของ service อื่นเข้ามาอยู่ใน public edge
-	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultCallOptions(grpc.ForceCodec(gen.JSONCodec{}))}
+	// gRPC uses the native protobuf codec in production.  The checked-in codec remains
+	// available to isolated tests/dev tools, but transport must not silently downgrade.
+	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
 	idc, e := grpc.Dial(idAddr, opts...)
 	if e != nil {
 		log.Fatal(e)
@@ -70,7 +72,9 @@ func main() {
 	app := fiber.New(fiber.Config{AppName: "golang-essential-3"})
 	app.Use(recover.New())
 	app.Use(requestID)
-	app.Get("/healthz", func(c *fiber.Ctx) error { return c.JSON(fiber.Map{"status": "ok"}) })
+	app.Get("/health/live", func(c *fiber.Ctx) error { return c.JSON(fiber.Map{"status": "ok"}) })
+	app.Get("/health/ready", func(c *fiber.Ctx) error { return c.JSON(fiber.Map{"status": "ready"}) })
+	app.Get("/healthz", func(c *fiber.Ctx) error { return c.Redirect("/health/live", fiber.StatusTemporaryRedirect) })
 	g.routes(app)
 	addr := env("GATEWAY_ADDR", ":8080")
 	go func() {
@@ -94,6 +98,7 @@ func (g *gateway) routes(app *fiber.App) {
 	app.Post("/api/v1/auth/logout", g.logout)
 	protected := app.Group("/api/v1", g.auth)
 	protected.Get("/tasks", g.listTasks)
+	protected.Get("/tasks/:id", g.getTask)
 	protected.Post("/tasks", g.createTask)
 	protected.Put("/tasks/:id", g.updateTask)
 	protected.Delete("/tasks/:id", g.deleteTask)
@@ -108,6 +113,9 @@ func (g *gateway) login(c *fiber.Ctx) error {
 	if e := c.BodyParser(&b); e != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
 	}
+	if strings.TrimSpace(b.Email) == "" || b.Password == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "email and password are required"})
+	}
 	ctx, cancel := rpcCtx(c)
 	defer cancel()
 	r, e := g.identity.Login(ctx, &identityv1.LoginRequest{Email: b.Email, Password: b.Password})
@@ -121,11 +129,20 @@ func (g *gateway) refresh(c *fiber.Ctx) error {
 	if e := c.BodyParser(&b); e != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
 	}
+	if strings.TrimSpace(b.RefreshToken) == "" { b.RefreshToken = c.Cookies("refresh_token") }
+	if strings.TrimSpace(b.RefreshToken) == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "refresh_token is required"})
+	}
 	ctx, cancel := rpcCtx(c)
 	defer cancel()
 	r, e := g.identity.Refresh(ctx, &identityv1.RefreshRequest{RefreshToken: b.RefreshToken})
 	if e != nil {
 		return grpcHTTP(c, e)
+	}
+	// Refresh credentials are session secrets: prefer an HttpOnly cookie so browser
+	// JavaScript cannot exfiltrate them. JSON is retained for non-browser API clients.
+	if r.RefreshToken != "" {
+		c.Cookie(&fiber.Cookie{Name: "refresh_token", Value: r.RefreshToken, HTTPOnly: true, Secure: env("COOKIE_SECURE", "false") == "true", SameSite: "Lax", Path: "/api/v1/auth", MaxAge: int(7 * 24 * time.Hour.Seconds())})
 	}
 	return c.JSON(r)
 }
@@ -173,13 +190,25 @@ func (g *gateway) listTasks(c *fiber.Ctx) error {
 	if e != nil {
 		return grpcHTTP(c, e)
 	}
-	return c.JSON(r.Tasks)
+	page, size, e := pagination(c)
+	if e != nil { return e }
+	start := (page - 1) * size
+	if start >= len(r.Tasks) { return c.JSON(fiber.Map{"items": []*taskv1.Task{}, "page": page, "page_size": size, "total": len(r.Tasks)}) }
+	end := start + size; if end > len(r.Tasks) { end = len(r.Tasks) }
+	return c.JSON(fiber.Map{"items": r.Tasks[start:end], "page": page, "page_size": size, "total": len(r.Tasks)})
+}
+func (g *gateway) getTask(c *fiber.Ctx) error {
+	ctx, cancel := rpcCtx(c); defer cancel()
+	r, e := g.tasks.GetTask(withActor(ctx, c), &taskv1.GetTaskRequest{Id: c.Params("id")})
+	if e != nil { return grpcHTTP(c, e) }
+	return c.JSON(r)
 }
 func (g *gateway) createTask(c *fiber.Ctx) error {
 	var b taskBody
 	if e := c.BodyParser(&b); e != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
 	}
+	if strings.TrimSpace(b.Title) == "" || len([]rune(b.Title)) > 200 { return c.Status(400).JSON(fiber.Map{"error": "title is required and must be at most 200 characters"}) }
 	ctx, cancel := rpcCtx(c)
 	defer cancel()
 	r, e := g.tasks.CreateTask(withActor(ctx, c), &taskv1.CreateTaskRequest{Title: b.Title, Description: b.Description})
@@ -190,10 +219,11 @@ func (g *gateway) createTask(c *fiber.Ctx) error {
 }
 func (g *gateway) updateTask(c *fiber.Ctx) error {
 	var b taskBody
-	_ = c.BodyParser(&b)
+	if e := c.BodyParser(&b); e != nil { return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"}) }
+	if strings.TrimSpace(b.Title) == "" || !map[string]bool{"todo": true, "doing": true, "done": true}[b.Status] { return c.Status(400).JSON(fiber.Map{"error": "title and status are required"}) }
 	ctx, cancel := rpcCtx(c)
 	defer cancel()
-	r, e := g.tasks.UpdateTask(withActor(ctx, c), &taskv1.UpdateTaskRequest{ID: c.Params("id"), Title: b.Title, Description: b.Description, Status: b.Status})
+	r, e := g.tasks.UpdateTask(withActor(ctx, c), &taskv1.UpdateTaskRequest{Id: c.Params("id"), Title: b.Title, Description: b.Description, Status: b.Status})
 	if e != nil {
 		return grpcHTTP(c, e)
 	}
@@ -202,7 +232,7 @@ func (g *gateway) updateTask(c *fiber.Ctx) error {
 func (g *gateway) deleteTask(c *fiber.Ctx) error {
 	ctx, cancel := rpcCtx(c)
 	defer cancel()
-	_, e := g.tasks.DeleteTask(withActor(ctx, c), &taskv1.DeleteTaskRequest{ID: c.Params("id")})
+	_, e := g.tasks.DeleteTask(withActor(ctx, c), &taskv1.DeleteTaskRequest{Id: c.Params("id")})
 	if e != nil {
 		return grpcHTTP(c, e)
 	}
@@ -238,11 +268,17 @@ func metadataAppend(ctx context.Context, kv ...string) context.Context {
 func grpcHTTP(c *fiber.Ctx, e error) error {
 	// Mapping อยู่ที่ edge เพราะ HTTP client ไม่ควรรู้จัก gRPC status code ภายในระบบ
 	code := status.Code(e)
-	m := map[codes.Code]int{codes.InvalidArgument: 400, codes.Unauthenticated: 401, codes.PermissionDenied: 403, codes.NotFound: 404, codes.DeadlineExceeded: 504}
+	m := map[codes.Code]int{codes.InvalidArgument: 400, codes.Unauthenticated: 401, codes.PermissionDenied: 403, codes.NotFound: 404, codes.DeadlineExceeded: 504, codes.Unavailable: 503, codes.Canceled: 499}
 	if v, ok := m[code]; ok {
 		return c.Status(v).JSON(fiber.Map{"error": status.Convert(e).Message()})
 	}
 	return c.Status(500).JSON(fiber.Map{"error": status.Convert(e).Message()})
+}
+func pagination(c *fiber.Ctx) (int, int, error) {
+	page, size := 1, 20
+	if v := c.Query("page"); v != "" { if _, e := fmt.Sscanf(v, "%d", &page); e != nil || page < 1 { return 0, 0, c.Status(400).JSON(fiber.Map{"error": "page must be a positive integer"}) } }
+	if v := c.Query("page_size"); v != "" { if _, e := fmt.Sscanf(v, "%d", &size); e != nil || size < 1 || size > 100 { return 0, 0, c.Status(400).JSON(fiber.Map{"error": "page_size must be between 1 and 100"}) } }
+	return page, size, nil
 }
 func requestID(c *fiber.Ctx) error {
 	if c.Get("X-Request-ID") == "" {

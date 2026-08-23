@@ -9,7 +9,6 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
-	gen "github.com/KantapatSg/golang-essential-3/contracts/gen/go"
 	identityv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/identity/v1"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -24,6 +23,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"time"
@@ -31,6 +31,8 @@ import (
 
 //go:embed migrations/001_init.sql
 var migrationSQL string
+//go:embed migrations/002_indexes.sql
+var migration2SQL string
 
 type user struct {
 	ID           string `gorm:"type:uuid;primaryKey"`
@@ -92,7 +94,7 @@ func (s *identityServer) issue(ctx context.Context, u user) (*identityv1.TokenRe
 		// fallback นี้เปิดได้เฉพาะ DEV_MODE เพื่อไม่กลบ infra จริงโดยไม่ตั้งใจ
 		s.devSessions[rt] = u.ID
 	}
-	return &identityv1.TokenResponse{AccessToken: at, RefreshToken: rt, TokenType: "Bearer", ExpiresIn: int64(s.accessTTL.Seconds()), UserID: u.ID, Role: u.Role}, nil
+	return &identityv1.TokenResponse{AccessToken: at, RefreshToken: rt, TokenType: "Bearer", ExpiresIn: int64(s.accessTTL.Seconds()), UserId: u.ID, Role: u.Role}, nil
 }
 func (s *identityServer) sessionID(ctx context.Context, token string) (string, error) {
 	if s.redis != nil {
@@ -195,7 +197,7 @@ func durationEnv(k string, d time.Duration) time.Duration {
 	return d
 }
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 	dsn := os.Getenv("IDENTITY_DB_DSN")
 	if dsn == "" && !isDev() {
@@ -211,7 +213,7 @@ func main() {
 		}
 		// Baseline ใช้ embedded SQL เพื่อให้ตัวอย่างเริ่มง่าย; Phase 1 จะเพิ่ม versioned migration command
 		// เพื่อให้ deploy และ rollback ตรวจสอบเวอร์ชัน schema ได้ชัดเจนขึ้น
-		if e = db.Exec(migrationSQL).Error; e != nil {
+		if e = runMigrations(db, []string{migrationSQL, migration2SQL}); e != nil {
 			log.Fatal(e)
 		}
 		if e = seedUsers(db); e != nil {
@@ -251,13 +253,19 @@ func main() {
 	if e != nil {
 		log.Fatal(e)
 	}
-	g := grpc.NewServer(grpc.ForceServerCodec(gen.JSONCodec{}), grpc.ChainUnaryInterceptor(requestIDInterceptor, deadlineInterceptor))
+	g := grpc.NewServer(grpc.ChainUnaryInterceptor(requestIDInterceptor, deadlineInterceptor))
 	identityv1.RegisterIdentityServiceServer(g, srv)
 	go func() { <-ctx.Done(); g.GracefulStop() }()
 	log.Printf("identity-service listening on %s", addr)
 	if e = g.Serve(lis); e != nil && !errors.Is(e, grpc.ErrServerStopped) {
 		log.Fatal(e)
 	}
+	if db != nil { if sqlDB, err := db.DB(); err == nil { _ = sqlDB.Close() } }
+	if rc != nil { _ = rc.Close() }
+}
+func runMigrations(db *gorm.DB, migrations []string) error {
+	if err := db.Exec("CREATE TABLE IF NOT EXISTS schema_migrations (version integer PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())").Error; err != nil { return err }
+	return db.Transaction(func(tx *gorm.DB) error { for i, sql := range migrations { if err := tx.Exec(sql).Error; err != nil { return err }; if err := tx.Exec("INSERT INTO schema_migrations(version) VALUES (?) ON CONFLICT DO NOTHING", i+1).Error; err != nil { return err } }; return nil })
 }
 func seedUsers(db *gorm.DB) error {
 	for _, x := range []struct{ email, pw, role string }{{"admin@example.com", env("ADMIN_PASSWORD", "admin123"), "admin"}, {"member@example.com", env("MEMBER_PASSWORD", "member123"), "member"}} {

@@ -15,7 +15,7 @@ func TestTaskOwnerRule(t *testing.T) {
 		t.Fatal(e)
 	}
 	ctx2 := metadata.NewIncomingContext(context.Background(), metadata.Pairs("x-user-id", "u2", "x-user-role", "member"))
-	if _, e = s.GetTask(ctx2, &taskv1.GetTaskRequest{ID: x.ID}); e == nil {
+	if _, e = s.GetTask(ctx2, &taskv1.GetTaskRequest{Id: x.Id}); e == nil {
 		t.Fatal("expected ownership denial")
 	}
 }

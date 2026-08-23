@@ -1,2 +1,8 @@
 version: v2
-plugins: []
+plugins:
+  - local: C:\Users\ASUS ROG\go\bin\protoc-gen-go.exe
+    out: gen/go
+    opt: paths=source_relative
+  - local: C:\Users\ASUS ROG\go\bin\protoc-gen-go-grpc.exe
+    out: gen/go
+    opt: paths=source_relative
