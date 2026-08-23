@@ -36,24 +36,24 @@ Phase 11 ห้าม re-design architecture หรือเพิ่ม stack �
 ## Verification checklist
 
 ```text
-[ ] make test
-[ ] make vet
-[ ] make build
-[ ] docker compose config --quiet
-[ ] Login ผ่าน Gateway
-[ ] Create/Update/Delete Task ผ่าน gRPC path
-[ ] ตรวจ Redis cache/invalidation
-[ ] ตรวจ outbox published_at
-[ ] ตรวจ Kafka activity event
-[ ] ตรวจ admin/member policy
-[ ] ตรวจ README และ docs ภาษาไทย
-[ ] ตรวจ Frontend/ClickHouse/Prometheus/Grafana ตาม phase ที่เสร็จ
+[x] make test (scripts/test.ps1)
+[x] make vet (scripts/vet.ps1)
+[x] make build (scripts/build.ps1)
+[x] docker compose config --quiet
+[x] Login ผ่าน Gateway
+[x] Create/Update/Delete Task ผ่าน gRPC path
+[x] ตรวจ Redis cache/invalidation
+[x] ตรวจ outbox published_at
+[x] ตรวจ Kafka activity event
+[x] ตรวจ admin/member policy
+[x] ตรวจ README และ docs ภาษาไทย
+[x] ตรวจ Frontend/ClickHouse/Prometheus/Grafana ตาม phase ที่เสร็จ
 [ ] ตรวจ production frontend route `/api` และ `/openapi.yaml` ผ่าน Nginx/Render จริง
-[ ] ตรวจ Swagger UI และ OpenAPI ครบทุก public endpoint
-[ ] ตรวจ readiness ตาม dependency ไม่ใช่ตอบ ready แบบคงที่
-[ ] ตรวจ ClickHouse duplicate event ไม่ทำให้ aggregate นับซ้ำ
-[ ] ตรวจว่า implementation ตรงกับ comment และ diagram
-[ ] git status clean
+[x] ตรวจ Swagger UI และ OpenAPI ครบทุก public endpoint
+[x] ตรวจ readiness ตาม dependency ไม่ใช่ตอบ ready แบบคงที่
+[x] ตรวจ ClickHouse duplicate event ไม่ทำให้ aggregate นับซ้ำ
+[x] ตรวจว่า implementation ตรงกับ comment และ diagram
+[x] git status clean ก่อน tag closeout
 ```
 
 ## Stop conditions

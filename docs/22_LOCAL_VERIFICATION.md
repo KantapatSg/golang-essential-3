@@ -1,6 +1,6 @@
 # Local Verification Record
 
-วันที่ตรวจล่าสุด: 2026-08-23 (Asia/Bangkok)
+วันที่ตรวจล่าสุด: 2026-08-23 23:52 (Asia/Bangkok)
 
 เอกสารนี้เก็บผลที่เคยรันจริง ส่วนสถานะ phase และจุด resume อยู่ใน
 [25_PHASE_CONTEXT_RESUME.md](25_PHASE_CONTEXT_RESUME.md) การมี source/config ไม่ถือว่าผ่าน
@@ -16,6 +16,7 @@ runtime acceptance
 - Frontend lint/typecheck ผ่าน
 - Playwright isolated landing/login ผ่าน 1 test
 - `docker compose -f deploy/docker-compose.yml config --quiet` ผ่าน
+- clean-volume Kafka topic initialization + projection startup race ผ่าน (`compose acceptance ok events=1`)
 - `npx --yes swagger-cli validate services/api-gateway/cmd/api-gateway/openapi.yaml` ผ่าน
 - PowerShell parse ของ `scripts/compose-acceptance.ps1` ผ่าน
 - GitHub CLI authenticated user `KantapatSg` ณเวลาที่ตรวจ
@@ -59,18 +60,18 @@ restart persistence ok events=2->2
 - Grafana panel query assertion เชิง API และ alert firing จริงยังเป็น follow-up (provision/runtime health ผ่าน)
 - cookie rotation/logout แบบ browser session และ Redis failure matrix ยังไม่มีหลักฐานแยก test ID
 - dependency security remediation (2 moderate) และ race suite ใน runner ที่เปิด CGO
-- GitHub public repository, clean-clone CI และ release tag
+- GitHub public repository และ clean-clone CI run `32652675076` ผ่าน; release tag อยู่ใน Phase 10 closeout
 - Render deployment
 
 ## Runtime Fixes ที่ต้องอยู่ใน commit เดียวกับ implementation
 
 ```text
-M  deploy/docker-compose.yml
-?? deploy/keygen.Dockerfile
-?? services/identity-service/cmd/keygen/main.go
+working tree clean ณ `69b72a4`; runtime fixes ถูก commit แล้ว
 ```
 
-ห้าม discard สามรายการนี้โดยไม่ตรวจ diff เพราะเป็น fix ที่ทำให้ local auth/task smoke ผ่าน
+ห้ามลบ runtime fixes ใน `deploy/docker-compose.yml`, `deploy/keygen.Dockerfile` หรือ
+`services/identity-service/cmd/keygen/main.go` โดยไม่ตรวจ diff เพราะเป็น fix ที่ทำให้ local
+auth/task/analytics smoke ผ่าน
 
 ## Next Verification
 
@@ -84,4 +85,4 @@ Acceptance command ที่ผ่านล่าสุด:
 $env:SKIP_BUILD='1'; pwsh -NoProfile -File scripts/compose-acceptance.ps1
 ```
 
-ผล: `compose acceptance ok events=4` และ cleanup ด้วย `docker compose down` สำเร็จ
+ผลล่าสุด: `compose acceptance ok events=1` และ cleanup ด้วย `docker compose down` สำเร็จ

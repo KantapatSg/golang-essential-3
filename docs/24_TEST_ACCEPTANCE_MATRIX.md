@@ -110,6 +110,14 @@ docker compose -f deploy/docker-compose.yml up --build -d
 ClickHouse projection, Prometheus targets และ Grafana health แล้ว cleanup ด้วย `docker compose down`.
 สำหรับ rerun ที่ไม่ต้อง rebuild image ใช้ `$env:SKIP_BUILD='1'`; CI ใช้ default full build.
 
+### Latest evidence
+
+```text
+Local clean-volume: PASS — compose acceptance ok events=1 (Kafka topic init enabled)
+GitHub Actions: PASS — run 32652675076
+  backend, frontend, compose+gitleaks และ integration jobs ทั้งหมดเขียว
+```
+
 ## 6. Evidence Format
 
 บันทึกผลใน `docs/25_PHASE_CONTEXT_RESUME.md` รูปแบบ:

@@ -55,12 +55,12 @@ test ID/evidence จาก [24_TEST_ACCEPTANCE_MATRIX.md](24_TEST_ACCEPTANCE_MAT
 ## GitHub ก่อน Deploy
 
 ```text
-[ ] CI green จาก clean clone
-[ ] secret scan ผ่าน
-[ ] ไม่มี .env, private key, token หรือ production dump
-[ ] git status clean
-[ ] repository visibility และ license ได้รับการยืนยัน
-[ ] สร้าง pre-deploy release/tag
+[x] CI green จาก clean clone — run `32652675076`
+[x] secret scan ผ่านใน Compose job
+[x] ไม่มี .env, private key, token หรือ production dump
+[x] git status clean ก่อน docs/tag closeout
+[x] repository เป็น Public และมี LICENSE
+[x] สร้าง pre-deploy release/tag หลัง CI green
 ```
 
 ## Deploy
