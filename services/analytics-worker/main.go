@@ -1,0 +1,173 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"github.com/segmentio/kafka-go"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"strings"
+	"sync/atomic"
+	"time"
+)
+
+type taskEvent struct {
+	EventID   string `json:"event_id"`
+	EventType string `json:"event_type"`
+	Task      struct {
+		ID      string `json:"ID"`
+		OwnerID string `json:"OwnerID"`
+		Status  string `json:"Status"`
+	} `json:"Task"`
+	OccurredAt time.Time `json:"occurred_at"`
+}
+type worker struct {
+	endpoint  string
+	http      *http.Client
+	processed atomic.Uint64
+	retries   atomic.Uint64
+	dlq       atomic.Uint64
+}
+
+func (w *worker) validate(b []byte) (taskEvent, error) {
+	var e taskEvent
+	if err := json.Unmarshal(b, &e); err != nil {
+		return e, fmt.Errorf("invalid JSON: %w", err)
+	}
+	if e.EventID == "" || e.EventType == "" || e.Task.ID == "" {
+		return e, errors.New("event_id, event_type and task.id are required")
+	}
+	if e.EventType != "task.created" && e.EventType != "task.updated" && e.EventType != "task.deleted" {
+		return e, fmt.Errorf("unsupported event type %q", e.EventType)
+	}
+	return e, nil
+}
+func (w *worker) insert(ctx context.Context, events []taskEvent) error {
+	if len(events) == 0 {
+		return nil
+	}
+	if w.endpoint == "" && strings.EqualFold(os.Getenv("DEV_MODE"), "true") {
+		w.processed.Add(uint64(len(events)))
+		return nil
+	}
+	if w.endpoint == "" {
+		return errors.New("CLICKHOUSE_URL is required")
+	}
+	var body strings.Builder
+	for _, e := range events {
+		b, _ := json.Marshal(map[string]any{"event_id": e.EventID, "event_type": e.EventType, "task_id": e.Task.ID, "actor_id": e.Task.OwnerID, "task_status": e.Task.Status, "occurred_at": e.OccurredAt.UTC().Format(time.RFC3339Nano), "payload_json": string(mustJSON(e))})
+		body.Write(b)
+		body.WriteByte('\n')
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.endpoint+"?query=INSERT%20INTO%20analytics.task_events%20FORMAT%20JSONEachRow", strings.NewReader(body.String()))
+	if err != nil {
+		return err
+	}
+	resp, err := w.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("clickhouse status %s", resp.Status)
+	}
+	w.processed.Add(uint64(len(events)))
+	return nil
+}
+func mustJSON(v any) []byte { b, _ := json.Marshal(v); return b }
+func (w *worker) retryInsert(ctx context.Context, events []taskEvent) error {
+	var err error
+	for i := 0; i < 4; i++ {
+		if err = w.insert(ctx, events); err == nil {
+			return nil
+		}
+		if i < 3 {
+			w.retries.Add(1)
+			wait := time.Duration(1<<i) * 100 * time.Millisecond
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(wait):
+			}
+		}
+	}
+	return err
+}
+func (w *worker) run(ctx context.Context, brokers string) error {
+	if strings.TrimSpace(brokers) == "" {
+		<-ctx.Done()
+		return nil
+	}
+	reader := kafka.NewReader(kafka.ReaderConfig{Brokers: strings.Split(brokers, ","), Topic: "task.events.v1", GroupID: "analytics-service-v1", MinBytes: 1, MaxBytes: 10 << 20})
+	defer reader.Close()
+	dlq := &kafka.Writer{Addr: kafka.TCP(strings.Split(brokers, ",")...), Topic: "task.events.v1.dlq", Balancer: &kafka.LeastBytes{}}
+	defer dlq.Close()
+	batch := make([]kafka.Message, 0, 50)
+	flush := time.NewTicker(2 * time.Second)
+	defer flush.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return w.flush(ctx, reader, batch)
+		case <-flush.C:
+			if err := w.flush(ctx, reader, batch); err != nil {
+				return err
+			}
+			batch = batch[:0]
+		default:
+			m, err := reader.FetchMessage(ctx)
+			if err != nil {
+				return err
+			}
+			e, err := w.validate(m.Value)
+			if err != nil {
+				if de := dlq.WriteMessages(ctx, kafka.Message{Key: m.Key, Value: append(m.Value, []byte("\nreason="+err.Error())...)}); de != nil {
+					return de
+				}
+				w.dlq.Add(1)
+				if err = reader.CommitMessages(ctx, m); err != nil {
+					return err
+				}
+				continue
+			}
+			batch = append(batch, m)
+			if len(batch) >= 50 {
+				if err = w.flush(ctx, reader, batch); err != nil {
+					return err
+				}
+				batch = batch[:0]
+			}
+			_ = e
+		}
+	}
+}
+func (w *worker) flush(ctx context.Context, reader *kafka.Reader, batch []kafka.Message) error {
+	if len(batch) == 0 {
+		return nil
+	}
+	events := make([]taskEvent, 0, len(batch))
+	for _, m := range batch {
+		e, err := w.validate(m.Value)
+		if err != nil {
+			return err
+		}
+		events = append(events, e)
+	}
+	if err := w.retryInsert(ctx, events); err != nil {
+		return err
+	} // commit only after ClickHouse confirms the whole batch
+	return reader.CommitMessages(ctx, batch...)
+}
+func main() {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+	w := &worker{endpoint: os.Getenv("CLICKHOUSE_URL"), http: &http.Client{Timeout: 5 * time.Second}}
+	if err := w.run(ctx, os.Getenv("KAFKA_BROKERS")); err != nil && !errors.Is(err, context.Canceled) {
+		log.Printf("analytics worker stopped: %v", err)
+	}
+	log.Printf("analytics worker processed=%d retries=%d dlq=%d", w.processed.Load(), w.retries.Load(), w.dlq.Load())
+}

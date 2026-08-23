@@ -1,4 +1,4 @@
-.PHONY: test vet build compose-config proto
+.PHONY: test vet build compose-config proto frontend-lint frontend-test frontend-build
 
 test:
 	powershell -ExecutionPolicy Bypass -File scripts/test.ps1
@@ -14,3 +14,12 @@ compose-config:
 
 proto:
 	powershell -ExecutionPolicy Bypass -File scripts/generate-proto.ps1
+
+frontend-lint:
+	powershell -NoProfile -Command "Set-Location frontend; npm run lint"
+
+frontend-test:
+	powershell -NoProfile -Command "Set-Location frontend; npm test"
+
+frontend-build:
+	powershell -NoProfile -Command "Set-Location frontend; npm run build"

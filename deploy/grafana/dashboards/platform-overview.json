@@ -1,0 +1,1 @@
+{"title":"Platform Overview","uid":"platform-overview","schemaVersion":39,"version":1,"panels":[{"type":"timeseries","title":"Service readiness","targets":[{"expr":"service_ready","refId":"A"}]},{"type":"timeseries","title":"HTTP request rate","targets":[{"expr":"sum(rate(http_requests_total[5m])) by (service)","refId":"A"}]}]}

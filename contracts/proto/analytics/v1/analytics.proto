@@ -1,0 +1,18 @@
+syntax = "proto3";
+package analytics.v1;
+option go_package = "github.com/KantapatSg/golang-essential-3/contracts/gen/go/analytics/v1;analyticsv1";
+
+service AnalyticsService {
+  rpc Summary(SummaryRequest) returns (SummaryResponse);
+  rpc Timeseries(TimeseriesRequest) returns (TimeseriesResponse);
+  rpc Statuses(StatusesRequest) returns (StatusesResponse);
+}
+message TimeRange { string from = 1; string to = 2; string timezone = 3; }
+message SummaryRequest { TimeRange range = 1; uint32 limit = 2; }
+message SummaryResponse { uint64 total_events = 1; uint64 created = 2; uint64 updated = 3; uint64 deleted = 4; string generated_at = 5; string data_through = 6; }
+message TimeseriesRequest { TimeRange range = 1; uint32 limit = 2; }
+message TimeseriesPoint { string day = 1; uint64 created = 2; uint64 updated = 3; uint64 deleted = 4; }
+message TimeseriesResponse { repeated TimeseriesPoint points = 1; string generated_at = 2; string data_through = 3; }
+message StatusesRequest { TimeRange range = 1; uint32 limit = 2; }
+message StatusCount { string status = 1; uint64 count = 2; }
+message StatusesResponse { repeated StatusCount statuses = 1; string generated_at = 2; string data_through = 3; }

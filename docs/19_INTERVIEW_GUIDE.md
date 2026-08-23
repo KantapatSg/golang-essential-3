@@ -59,3 +59,6 @@ CQRS read อาจไม่เห็น mutation ทันที ต้อง�
 
 Project 1 เน้น layer ใน process เดียว Project 2 เพิ่ม microservices/gRPC/Kafka และ Project 3 เพิ่ม user-facing frontend, analytical workload และ observability เพื่อแสดงทั้ง business flow และ production trade-offs
 
+## สถานะสำหรับการสาธิต (2026-08-23)
+
+สาธิต local ได้ถึง Gateway, native protobuf gRPC, React routes, analytics contract/worker, health/metrics endpoints และ Grafana provisioning โดยใช้ unit/build/config checks ที่ repository เก็บไว้ ส่วน flow Kafka -> ClickHouse แบบ provider จริงต้องรัน Docker Compose และบันทึกผล smoke ก่อนกล่าวว่า end-to-end ผ่าน; Render/domain/paid resource ยังเป็น hold point หลัง Phase 10

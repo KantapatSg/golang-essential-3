@@ -24,6 +24,8 @@
 
 ## Phase 1 — Harden Project 2 Baseline
 
+**สถานะ: เสร็จแล้ว (local tests ผ่าน 2026-08-23, commit `d68817e`)**
+
 ### งาน
 
 - เพิ่ม REST `GET /api/v1/tasks/:id` ให้ครบกับ gRPC contract
@@ -50,6 +52,8 @@
 ```
 
 ## Phase 2 — Frontend Foundation และ Secure Session
+
+**สถานะ: เสร็จแล้วใน local (lint/test/build ผ่าน; provider-backed login smoke รอ Compose)**
 
 ### งาน
 
@@ -78,6 +82,8 @@
 
 ## Phase 3 — Analytics Contracts และ ClickHouse Schema
 
+**สถานะ: implement แล้วใน source; Compose ClickHouse migration/ingestion ต้องตรวจ runtime**
+
 ### งาน
 
 - เพิ่ม `analytics/v1/analytics.proto`
@@ -102,6 +108,8 @@
 ```
 
 ## Phase 4 — Kafka to ClickHouse Analytics Worker
+
+**สถานะ: implement แล้วใน source; Kafka/ClickHouse failure/replay ต้องตรวจด้วย Docker runtime**
 
 ### งาน
 

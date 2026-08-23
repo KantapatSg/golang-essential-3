@@ -1,0 +1,1 @@
+{"title":"Business Analytics (ClickHouse)","uid":"business-analytics","schemaVersion":39,"version":1,"panels":[{"type":"table","title":"Task events by day","targets":[{"rawSql":"SELECT event_date, event_type, count() AS events FROM analytics.task_events WHERE event_date >= today() - 7 GROUP BY event_date, event_type ORDER BY event_date","format":"table"}]}]}

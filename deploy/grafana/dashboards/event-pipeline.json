@@ -1,0 +1,1 @@
+{"title":"Event Pipeline","uid":"event-pipeline","schemaVersion":39,"version":1,"panels":[{"type":"timeseries","title":"Analytics processed","targets":[{"expr":"analytics_processed_events_total","refId":"A"}]},{"type":"timeseries","title":"Consumer retries","targets":[{"expr":"analytics_retry_total","refId":"A"}]}]}

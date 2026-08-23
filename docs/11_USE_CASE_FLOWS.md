@@ -289,9 +289,9 @@ gRPC และ Kafka ไม่ได้ทดแทนกัน gRPC ใช้�
 
 ## 12. สถานะ Implementation ที่ควรรู้
 
-- Gateway ปัจจุบัน expose REST สำหรับ List/Create/Update/Delete Task ส่วน `GetTask` มีใน gRPC contract/service แต่ยังไม่ได้ expose เป็น `GET /api/v1/tasks/:id`
-- Repository มี `.proto` แต่ checked-in fallback stubs ใช้ deterministic JSON codec เพื่อให้ทดสอบได้โดยไม่มี `buf/protoc`; Production ควร generate native Protobuf ด้วย `make proto`
-- ClickHouse, Prometheus และ Grafana ยังไม่อยู่ใน Flow ปัจจุบัน จึงไม่แสดงเป็น component ที่ implement แล้ว
+- Gateway expose REST สำหรับ List/Create/Get-by-ID/Update/Delete Task พร้อม bounded pagination และ gRPC error mapping
+- Contracts ถูก generate เป็น native protobuf stubs ด้วย Buf + protoc-gen-go; JSON codec เหลือไว้สำหรับ isolated test/dev tooling เท่านั้น
+- Analytics service/worker, ClickHouse schema, Prometheus endpoints และ Grafana provisioning มีใน local Compose; external provider-backed ingestion ต้องยืนยันด้วย Docker smoke
 
 ## 13. Flow ที่ควรจำสำหรับ Interview
 

@@ -5,9 +5,9 @@
 ## สถานะที่ต้องอ่านก่อน
 
 ```text
-มีใน baseline แล้ว     Gateway, Identity, Task, Activity, PostgreSQL, Redis, Kafka
-ออกแบบแล้วแต่ยังไม่มี  Frontend, Analytics API/Worker, ClickHouse, Prometheus, Grafana
-ทำภายหลัง             GitHub public portfolio และ Render deployment
+มีใน local implementation แล้ว  Gateway, Identity, Task, Activity, Frontend, Analytics API/Worker, ClickHouse schema, Prometheus/Grafana artifacts
+ต้องตรวจด้วย provider runtime   Kafka/ClickHouse end-to-end ingestion และ clean-volume browser smoke
+ทำภายหลัง                       Render deployment, custom domain และ paid cloud resources
 ```
 
 ## Target architecture
@@ -112,4 +112,3 @@ Task + Outbox -> Kafka -> Activity PostgreSQL + Analytics ClickHouse
 Observability:
 Service metrics -> Prometheus -> Grafana -> Alert/Runbook
 ```
-

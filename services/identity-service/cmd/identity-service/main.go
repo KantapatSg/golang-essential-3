@@ -22,6 +22,7 @@ import (
 	"gorm.io/gorm"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -31,6 +32,7 @@ import (
 
 //go:embed migrations/001_init.sql
 var migrationSQL string
+
 //go:embed migrations/002_indexes.sql
 var migration2SQL string
 
@@ -245,6 +247,7 @@ func main() {
 		log.Fatal(e)
 	}
 	srv := &identityServer{db: db, redis: rc, users: devUsers, signer: signer, accessTTL: durationEnv("ACCESS_TTL", 15*time.Minute), refreshTTL: durationEnv("REFRESH_TTL", 7*24*time.Hour), devSessions: map[string]string{}}
+	startHealthServer(ctx, env("IDENTITY_HTTP_ADDR", ":9101"))
 	addr := os.Getenv("IDENTITY_ADDR")
 	if addr == "" {
 		addr = ":50051"
@@ -260,12 +263,54 @@ func main() {
 	if e = g.Serve(lis); e != nil && !errors.Is(e, grpc.ErrServerStopped) {
 		log.Fatal(e)
 	}
-	if db != nil { if sqlDB, err := db.DB(); err == nil { _ = sqlDB.Close() } }
-	if rc != nil { _ = rc.Close() }
+	if db != nil {
+		if sqlDB, err := db.DB(); err == nil {
+			_ = sqlDB.Close()
+		}
+	}
+	if rc != nil {
+		_ = rc.Close()
+	}
+}
+func startHealthServer(ctx context.Context, addr string) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health/live", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+	mux.HandleFunc("/health/ready", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ready"}`))
+	})
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("service_ready 1\n")) })
+	srv := &http.Server{Addr: addr, Handler: mux}
+	go func() {
+		<-ctx.Done()
+		stop, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(stop)
+	}()
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("health server: %v", err)
+		}
+	}()
 }
 func runMigrations(db *gorm.DB, migrations []string) error {
-	if err := db.Exec("CREATE TABLE IF NOT EXISTS schema_migrations (version integer PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())").Error; err != nil { return err }
-	return db.Transaction(func(tx *gorm.DB) error { for i, sql := range migrations { if err := tx.Exec(sql).Error; err != nil { return err }; if err := tx.Exec("INSERT INTO schema_migrations(version) VALUES (?) ON CONFLICT DO NOTHING", i+1).Error; err != nil { return err } }; return nil })
+	if err := db.Exec("CREATE TABLE IF NOT EXISTS schema_migrations (version integer PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())").Error; err != nil {
+		return err
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		for i, sql := range migrations {
+			if err := tx.Exec(sql).Error; err != nil {
+				return err
+			}
+			if err := tx.Exec("INSERT INTO schema_migrations(version) VALUES (?) ON CONFLICT DO NOTHING", i+1).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 func seedUsers(db *gorm.DB) error {
 	for _, x := range []struct{ email, pw, role string }{{"admin@example.com", env("ADMIN_PASSWORD", "admin123"), "admin"}, {"member@example.com", env("MEMBER_PASSWORD", "member123"), "member"}} {

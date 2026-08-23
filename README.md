@@ -2,8 +2,8 @@
 
 Portfolio project สำหรับเรียนรู้ Go Microservices แบบ end-to-end โดยต่อยอด source code จาก `golang-essential-2` และเพิ่ม Frontend, ClickHouse analytics, Prometheus metrics, Grafana dashboards และแผน deploy บน Render
 
-> สถานะปัจจุบัน: **Design-ready / Implementation pending**  
-> โค้ด backend ที่อยู่ใน repository เป็น baseline จาก Project 2 ส่วน feature ของ Project 3 ต้องทำตาม [Implementation Phases](docs/16_IMPLEMENTATION_PHASES.md) ก่อนจึงจะถือว่าเสร็จ
+> สถานะปัจจุบัน: **Local implementation complete through Phase 10 hold point**  
+> Backend, frontend, analytics, observability, CI และ production-like Compose มีใน source แล้ว; provider-backed ClickHouse/Kafka smoke ต้องยืนยันด้วย Docker runtime
 
 ## เป้าหมายระบบ
 
@@ -37,13 +37,13 @@ Grafana ---------------------------> ClickHouse datasource
 - Unit tests, Docker Compose และเอกสารภาษาไทย
 - Comment ในจุดเรียนรู้สำคัญ เช่น CQRS, cache-aside, outbox, deadline และ idempotency
 
-## สิ่งที่ Project 3 ต้องเพิ่ม
+## สิ่งที่ Project 3 เพิ่มแล้ว (local)
 
 - React + TypeScript frontend สำหรับ Login, Task Board, Activity และ Analytics
 - Analytics API/Worker และ ClickHouse schema
 - Prometheus metrics, health/readiness endpoints และ Grafana dashboards
 - Frontend unit/component/E2E tests
-- CI pipeline, Render Blueprint, custom domain และ production environment matrix
+- CI pipeline, dashboards, alerts/runbook และ production-like local environment
 - เอกสาร interview, cost และ use-case flow ที่ครอบคลุม Browser ถึง ClickHouse/Grafana
 
 ## ตรวจ baseline ก่อนเริ่ม implement
@@ -56,6 +56,22 @@ docker compose -f deploy/docker-compose.yml config --quiet
 ```
 
 Baseline ยังไม่ใช่ Project 3 ที่เสร็จแล้ว การทดสอบผ่านในขั้นนี้พิสูจน์เพียงว่า source ที่รับมาจาก Project 2 ยังทำงานหลัง fork
+
+## คำสั่งตรวจทั้งหมด
+
+```powershell
+make test
+make vet
+make build
+make compose-config
+make frontend-lint
+make frontend-test
+make frontend-build
+docker compose -f deploy/docker-compose.yml up --build
+./scripts/smoke-test.ps1
+```
+
+Frontend อยู่ที่ `http://localhost:3000`, Gateway ที่ `http://localhost:8080` และ Grafana ที่ `http://localhost:3001` เมื่อ Compose ทำงาน Demo accounts คือ `member@example.com/member123` และ `admin@example.com/admin123` (local only)
 
 ## เอกสารหลัก
 
@@ -80,4 +96,3 @@ Baseline ยังไม่ใช่ Project 3 ที่เสร็จแล้
 3. Push ไป GitHub เพื่อใช้เป็น portfolio
 4. หยุดรอการตรวจค่าใช้จ่ายและ environment variables
 5. Deploy Render เมื่อได้รับคำสั่งในขั้น deploy เท่านั้น
-

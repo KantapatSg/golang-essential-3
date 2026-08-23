@@ -19,6 +19,11 @@ services:
       KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
       ALLOW_PLAINTEXT_LISTENER: "yes"
     healthcheck: { test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"], interval: 10s, timeout: 5s, retries: 20 }
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    environment: { CLICKHOUSE_DB: analytics }
+    volumes: [ clickhouse-data:/var/lib/clickhouse, ../services/analytics-service/migrations:/docker-entrypoint-initdb.d:ro ]
+    healthcheck: { test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping | grep -q Ok"], interval: 5s, timeout: 3s, retries: 20 }
   identity-service:
     build: { context: .., dockerfile: deploy/Dockerfile, args: { SERVICE: identity-service } }
     environment:
@@ -48,6 +53,15 @@ services:
       KAFKA_BROKERS: "kafka:9092"
     depends_on: { postgres: { condition: service_healthy }, kafka: { condition: service_healthy } }
     ports: ["127.0.0.1:50053:50053"]
+  analytics-service:
+    build: { context: .., dockerfile: deploy/Dockerfile, args: { SERVICE: analytics-service } }
+    environment: { ANALYTICS_ADDR: ":50054", ANALYTICS_HTTP_ADDR: ":9104", CLICKHOUSE_URL: "http://clickhouse:8123" }
+    depends_on: { clickhouse: { condition: service_healthy } }
+    ports: ["127.0.0.1:50054:50054"]
+  analytics-worker:
+    build: { context: .., dockerfile: deploy/Dockerfile, args: { SERVICE: analytics-worker } }
+    environment: { KAFKA_BROKERS: "kafka:9092", CLICKHOUSE_URL: "http://clickhouse:8123" }
+    depends_on: { kafka: { condition: service_healthy }, clickhouse: { condition: service_healthy } }
   api-gateway:
     build: { context: .., dockerfile: deploy/Dockerfile, args: { SERVICE: api-gateway } }
     environment:
@@ -55,6 +69,7 @@ services:
       IDENTITY_ADDR: "identity-service:50051"
       TASK_ADDR: "task-service:50052"
       ACTIVITY_ADDR: "activity-service:50053"
+      ANALYTICS_ADDR: "analytics-service:50054"
       JWT_PUBLIC_KEY_PATH: /keys/public.pem
     volumes: [ keys:/keys:ro ]
     depends_on:
@@ -62,5 +77,21 @@ services:
       task-service: { condition: service_started }
       activity-service: { condition: service_started }
     ports: ["8080:8080"]
+  frontend:
+    build: { context: .., dockerfile: deploy/frontend.Dockerfile }
+    depends_on: { api-gateway: { condition: service_started } }
+    ports: ["3000:80"]
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=7d"]
+    volumes: [ ./prometheus.yml:/etc/prometheus/prometheus.yml:ro, ./alerts.yml:/etc/prometheus/alerts.yml:ro ]
+    ports: ["127.0.0.1:9090:9090"]
+  grafana:
+    image: grafana/grafana:11.3.1
+    environment: { GF_AUTH_ANONYMOUS_ENABLED: "true", GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer }
+    volumes: [ ./grafana/provisioning:/etc/grafana/provisioning:ro, ./grafana/dashboards:/var/lib/grafana/dashboards:ro ]
+    depends_on: { prometheus: { condition: service_started }, clickhouse: { condition: service_healthy } }
+    ports: ["127.0.0.1:3001:3000"]
 volumes:
   keys:
+  clickhouse-data:

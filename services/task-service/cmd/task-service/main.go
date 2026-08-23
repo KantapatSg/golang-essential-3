@@ -17,6 +17,7 @@ import (
 	"gorm.io/gorm"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -26,6 +27,7 @@ import (
 
 //go:embed migrations/001_init.sql
 var migrationSQL string
+
 //go:embed migrations/002_indexes.sql
 var migration2SQL string
 
@@ -386,6 +388,7 @@ func main() {
 		log.Fatal(e)
 	}
 	s := &taskServer{data: map[string]task{}, cache: map[string][]task{}, outbox: make(chan outboxEvent, 128), writer: writer, reader: reader, redis: rc}
+	startHealthServer(ctx, env("TASK_HTTP_ADDR", ":9102"))
 	go s.publishOutbox(ctx, os.Getenv("KAFKA_BROKERS"))
 	g := grpc.NewServer(grpc.UnaryInterceptor(deadlineInterceptor))
 	taskv1.RegisterTaskServiceServer(g, s)
@@ -394,14 +397,60 @@ func main() {
 	if e = g.Serve(lis); e != nil && !errors.Is(e, grpc.ErrServerStopped) {
 		log.Fatal(e)
 	}
-	if writer != nil { if db, err := writer.DB(); err == nil { _ = db.Close() } }
-	if reader != nil && reader != writer { if db, err := reader.DB(); err == nil { _ = db.Close() } }
-	if rc != nil { _ = rc.Close() }
+	if writer != nil {
+		if db, err := writer.DB(); err == nil {
+			_ = db.Close()
+		}
+	}
+	if reader != nil && reader != writer {
+		if db, err := reader.DB(); err == nil {
+			_ = db.Close()
+		}
+	}
+	if rc != nil {
+		_ = rc.Close()
+	}
+}
+func startHealthServer(ctx context.Context, addr string) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health/live", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
+	mux.HandleFunc("/health/ready", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ready"}`))
+	})
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("service_ready 1\n")) })
+	srv := &http.Server{Addr: addr, Handler: mux}
+	go func() {
+		<-ctx.Done()
+		stop, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(stop)
+	}()
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("health server: %v", err)
+		}
+	}()
 }
 func runMigrations(db *gorm.DB, migrations []string) error {
 	// แต่ละ bounded context เป็นเจ้าของ migration table ของตัวเอง; version ทำให้ startup ซ้ำได้และ audit schema ได้
-	if err := db.Exec("CREATE TABLE IF NOT EXISTS schema_migrations (version integer PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())").Error; err != nil { return err }
-	return db.Transaction(func(tx *gorm.DB) error { for i, sql := range migrations { if err := tx.Exec(sql).Error; err != nil { return err }; if err := tx.Exec("INSERT INTO schema_migrations(version) VALUES (?) ON CONFLICT DO NOTHING", i+1).Error; err != nil { return err } }; return nil })
+	if err := db.Exec("CREATE TABLE IF NOT EXISTS schema_migrations (version integer PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())").Error; err != nil {
+		return err
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		for i, sql := range migrations {
+			if err := tx.Exec(sql).Error; err != nil {
+				return err
+			}
+			if err := tx.Exec("INSERT INTO schema_migrations(version) VALUES (?) ON CONFLICT DO NOTHING", i+1).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 func env(k, d string) string {
 	if v := os.Getenv(k); v != "" {

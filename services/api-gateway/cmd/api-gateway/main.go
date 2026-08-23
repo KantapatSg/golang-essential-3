@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	activityv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/activity/v1"
+	analyticsv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/analytics/v1"
 	identityv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/identity/v1"
 	taskv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/task/v1"
 	"github.com/gofiber/fiber/v2"
@@ -24,6 +25,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -32,6 +34,7 @@ type gateway struct {
 	identity   identityv1.IdentityServiceClient
 	tasks      taskv1.TaskServiceClient
 	activities activityv1.ActivityServiceClient
+	analytics  analyticsv1.AnalyticsServiceClient
 	public     *rsa.PublicKey
 }
 type loginBody struct {
@@ -51,6 +54,7 @@ func main() {
 	idAddr := env("IDENTITY_ADDR", "localhost:50051")
 	taskAddr := env("TASK_ADDR", "localhost:50052")
 	actAddr := env("ACTIVITY_ADDR", "localhost:50053")
+	analyticsAddr := env("ANALYTICS_ADDR", "localhost:50054")
 	// Gateway เป็น composition root: จุดนี้ประกอบ gRPC clients และ transport concerns
 	// โดยไม่ดึง business logic ของ service อื่นเข้ามาอยู่ใน public edge
 	// gRPC uses the native protobuf codec in production.  The checked-in codec remains
@@ -68,12 +72,18 @@ func main() {
 	if e != nil {
 		log.Fatal(e)
 	}
-	g := &gateway{identity: identityv1.NewIdentityServiceClient(idc), tasks: taskv1.NewTaskServiceClient(tc), activities: activityv1.NewActivityServiceClient(ac), public: loadPublic(env("JWT_PUBLIC_KEY_PATH", "deploy/keys/public.pem"))}
+	anc, e := grpc.Dial(analyticsAddr, opts...)
+	if e != nil {
+		log.Print(e)
+	}
+	g := &gateway{identity: identityv1.NewIdentityServiceClient(idc), tasks: taskv1.NewTaskServiceClient(tc), activities: activityv1.NewActivityServiceClient(ac), analytics: analyticsv1.NewAnalyticsServiceClient(anc), public: loadPublic(env("JWT_PUBLIC_KEY_PATH", "deploy/keys/public.pem"))}
 	app := fiber.New(fiber.Config{AppName: "golang-essential-3"})
 	app.Use(recover.New())
 	app.Use(requestID)
 	app.Get("/health/live", func(c *fiber.Ctx) error { return c.JSON(fiber.Map{"status": "ok"}) })
 	app.Get("/health/ready", func(c *fiber.Ctx) error { return c.JSON(fiber.Map{"status": "ready"}) })
+	// Metrics intentionally expose only low-cardinality operational names; IDs belong in logs.
+	app.Get("/metrics", func(c *fiber.Ctx) error { c.Type("text"); return c.SendString("service_ready 1\n") })
 	app.Get("/healthz", func(c *fiber.Ctx) error { return c.Redirect("/health/live", fiber.StatusTemporaryRedirect) })
 	g.routes(app)
 	addr := env("GATEWAY_ADDR", ":8080")
@@ -103,6 +113,9 @@ func (g *gateway) routes(app *fiber.App) {
 	protected.Put("/tasks/:id", g.updateTask)
 	protected.Delete("/tasks/:id", g.deleteTask)
 	protected.Get("/activities", g.listActivities)
+	protected.Get("/analytics/summary", g.analyticsSummary)
+	protected.Get("/analytics/timeseries", g.analyticsTimeseries)
+	protected.Get("/analytics/statuses", g.analyticsStatuses)
 	app.Get("/openapi.yaml", func(c *fiber.Ctx) error { c.Type("yaml"); return c.SendString(openAPI) })
 	app.Get("/swagger/", func(c *fiber.Ctx) error {
 		return c.Type("html").SendString("<!doctype html><title>Swagger</title><p>OpenAPI: <a href='/openapi.yaml'>/openapi.yaml</a></p>")
@@ -129,7 +142,9 @@ func (g *gateway) refresh(c *fiber.Ctx) error {
 	if e := c.BodyParser(&b); e != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
 	}
-	if strings.TrimSpace(b.RefreshToken) == "" { b.RefreshToken = c.Cookies("refresh_token") }
+	if strings.TrimSpace(b.RefreshToken) == "" {
+		b.RefreshToken = c.Cookies("refresh_token")
+	}
 	if strings.TrimSpace(b.RefreshToken) == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "refresh_token is required"})
 	}
@@ -191,16 +206,26 @@ func (g *gateway) listTasks(c *fiber.Ctx) error {
 		return grpcHTTP(c, e)
 	}
 	page, size, e := pagination(c)
-	if e != nil { return e }
+	if e != nil {
+		return e
+	}
 	start := (page - 1) * size
-	if start >= len(r.Tasks) { return c.JSON(fiber.Map{"items": []*taskv1.Task{}, "page": page, "page_size": size, "total": len(r.Tasks)}) }
-	end := start + size; if end > len(r.Tasks) { end = len(r.Tasks) }
+	if start >= len(r.Tasks) {
+		return c.JSON(fiber.Map{"items": []*taskv1.Task{}, "page": page, "page_size": size, "total": len(r.Tasks)})
+	}
+	end := start + size
+	if end > len(r.Tasks) {
+		end = len(r.Tasks)
+	}
 	return c.JSON(fiber.Map{"items": r.Tasks[start:end], "page": page, "page_size": size, "total": len(r.Tasks)})
 }
 func (g *gateway) getTask(c *fiber.Ctx) error {
-	ctx, cancel := rpcCtx(c); defer cancel()
+	ctx, cancel := rpcCtx(c)
+	defer cancel()
 	r, e := g.tasks.GetTask(withActor(ctx, c), &taskv1.GetTaskRequest{Id: c.Params("id")})
-	if e != nil { return grpcHTTP(c, e) }
+	if e != nil {
+		return grpcHTTP(c, e)
+	}
 	return c.JSON(r)
 }
 func (g *gateway) createTask(c *fiber.Ctx) error {
@@ -208,7 +233,9 @@ func (g *gateway) createTask(c *fiber.Ctx) error {
 	if e := c.BodyParser(&b); e != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
 	}
-	if strings.TrimSpace(b.Title) == "" || len([]rune(b.Title)) > 200 { return c.Status(400).JSON(fiber.Map{"error": "title is required and must be at most 200 characters"}) }
+	if strings.TrimSpace(b.Title) == "" || len([]rune(b.Title)) > 200 {
+		return c.Status(400).JSON(fiber.Map{"error": "title is required and must be at most 200 characters"})
+	}
 	ctx, cancel := rpcCtx(c)
 	defer cancel()
 	r, e := g.tasks.CreateTask(withActor(ctx, c), &taskv1.CreateTaskRequest{Title: b.Title, Description: b.Description})
@@ -219,8 +246,12 @@ func (g *gateway) createTask(c *fiber.Ctx) error {
 }
 func (g *gateway) updateTask(c *fiber.Ctx) error {
 	var b taskBody
-	if e := c.BodyParser(&b); e != nil { return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"}) }
-	if strings.TrimSpace(b.Title) == "" || !map[string]bool{"todo": true, "doing": true, "done": true}[b.Status] { return c.Status(400).JSON(fiber.Map{"error": "title and status are required"}) }
+	if e := c.BodyParser(&b); e != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
+	}
+	if strings.TrimSpace(b.Title) == "" || !map[string]bool{"todo": true, "doing": true, "done": true}[b.Status] {
+		return c.Status(400).JSON(fiber.Map{"error": "title and status are required"})
+	}
 	ctx, cancel := rpcCtx(c)
 	defer cancel()
 	r, e := g.tasks.UpdateTask(withActor(ctx, c), &taskv1.UpdateTaskRequest{Id: c.Params("id"), Title: b.Title, Description: b.Description, Status: b.Status})
@@ -252,6 +283,81 @@ func (g *gateway) listActivities(c *fiber.Ctx) error {
 	}
 	return c.JSON(r.Activities)
 }
+func adminOnly(c *fiber.Ctx) error {
+	if role, _ := c.Locals("role").(string); role != "admin" {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "admin role required"})
+	}
+	return nil
+}
+func timeRange(c *fiber.Ctx) (*analyticsv1.TimeRange, uint32, error) {
+	from, to := c.Query("from"), c.Query("to")
+	limit := uint32(100)
+	if v := c.Query("limit"); v != "" {
+		n, e := strconv.Atoi(v)
+		if e != nil || n < 1 || n > 500 {
+			return nil, 0, c.Status(400).JSON(fiber.Map{"error": "limit must be between 1 and 500"})
+		}
+		limit = uint32(n)
+	}
+	return &analyticsv1.TimeRange{From: from, To: to, Timezone: c.Query("timezone", "UTC")}, limit, nil
+}
+func (g *gateway) analyticsSummary(c *fiber.Ctx) error {
+	if e := adminOnly(c); e != nil {
+		return e
+	}
+	if g.analytics == nil {
+		return c.Status(503).JSON(fiber.Map{"error": "analytics unavailable"})
+	}
+	r, limit, e := timeRange(c)
+	if e != nil {
+		return e
+	}
+	ctx, cancel := rpcCtx(c)
+	defer cancel()
+	out, e := g.analytics.Summary(ctx, &analyticsv1.SummaryRequest{Range: r, Limit: limit})
+	if e != nil {
+		return grpcHTTP(c, e)
+	}
+	return c.JSON(out)
+}
+func (g *gateway) analyticsTimeseries(c *fiber.Ctx) error {
+	if e := adminOnly(c); e != nil {
+		return e
+	}
+	if g.analytics == nil {
+		return c.Status(503).JSON(fiber.Map{"error": "analytics unavailable"})
+	}
+	r, limit, e := timeRange(c)
+	if e != nil {
+		return e
+	}
+	ctx, cancel := rpcCtx(c)
+	defer cancel()
+	out, e := g.analytics.Timeseries(ctx, &analyticsv1.TimeseriesRequest{Range: r, Limit: limit})
+	if e != nil {
+		return grpcHTTP(c, e)
+	}
+	return c.JSON(out)
+}
+func (g *gateway) analyticsStatuses(c *fiber.Ctx) error {
+	if e := adminOnly(c); e != nil {
+		return e
+	}
+	if g.analytics == nil {
+		return c.Status(503).JSON(fiber.Map{"error": "analytics unavailable"})
+	}
+	r, limit, e := timeRange(c)
+	if e != nil {
+		return e
+	}
+	ctx, cancel := rpcCtx(c)
+	defer cancel()
+	out, e := g.analytics.Statuses(ctx, &analyticsv1.StatusesRequest{Range: r, Limit: limit})
+	if e != nil {
+		return grpcHTTP(c, e)
+	}
+	return c.JSON(out)
+}
 func withActor(ctx context.Context, c *fiber.Ctx) context.Context {
 	// ส่ง identity ข้าม network boundary ด้วย gRPC metadata เพื่อให้ service ปลายทาง
 	// บังคับ ownership/RBAC ซ้ำได้ ไม่พึ่งการตรวจที่ Gateway เพียงชั้นเดียว
@@ -276,8 +382,16 @@ func grpcHTTP(c *fiber.Ctx, e error) error {
 }
 func pagination(c *fiber.Ctx) (int, int, error) {
 	page, size := 1, 20
-	if v := c.Query("page"); v != "" { if _, e := fmt.Sscanf(v, "%d", &page); e != nil || page < 1 { return 0, 0, c.Status(400).JSON(fiber.Map{"error": "page must be a positive integer"}) } }
-	if v := c.Query("page_size"); v != "" { if _, e := fmt.Sscanf(v, "%d", &size); e != nil || size < 1 || size > 100 { return 0, 0, c.Status(400).JSON(fiber.Map{"error": "page_size must be between 1 and 100"}) } }
+	if v := c.Query("page"); v != "" {
+		if _, e := fmt.Sscanf(v, "%d", &page); e != nil || page < 1 {
+			return 0, 0, c.Status(400).JSON(fiber.Map{"error": "page must be a positive integer"})
+		}
+	}
+	if v := c.Query("page_size"); v != "" {
+		if _, e := fmt.Sscanf(v, "%d", &size); e != nil || size < 1 || size > 100 {
+			return 0, 0, c.Status(400).JSON(fiber.Map{"error": "page_size must be between 1 and 100"})
+		}
+	}
 	return page, size, nil
 }
 func requestID(c *fiber.Ctx) error {
@@ -317,7 +431,13 @@ info:
   title: golang-essential-3 API
   version: 1.0.0
 paths:
-  /healthz: {get: {responses: {'200': {description: ok}}}}
+  /health/live: {get: {responses: {'200': {description: ok}}}}
+  /health/ready: {get: {responses: {'200': {description: ready}}}}
+  /healthz: {get: {responses: {'307': {description: legacy redirect}}}}
   /api/v1/auth/login: {post: {responses: {'200': {description: token}}}}
-  /api/v1/tasks: {get: {responses: {'200': {description: tasks}}}, post: {responses: {'201': {description: task}}}}
+  /api/v1/tasks: {get: {responses: {'200': {description: paginated tasks}}}, post: {responses: {'201': {description: task}}}}
+  /api/v1/tasks/{id}: {get: {responses: {'200': {description: task}, '404': {description: not found}}}, put: {responses: {'200': {description: task}}}, delete: {responses: {'204': {description: deleted}}}}
+  /api/v1/analytics/summary: {get: {responses: {'200': {description: admin summary}, '403': {description: forbidden}}}}
+  /api/v1/analytics/timeseries: {get: {responses: {'200': {description: admin timeseries}}}}
+  /api/v1/analytics/statuses: {get: {responses: {'200': {description: admin statuses}}}}
 `
