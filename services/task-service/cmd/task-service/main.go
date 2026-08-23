@@ -125,6 +125,9 @@ func (s *taskServer) ListTasks(ctx context.Context, _ *taskv1.ListTasksRequest) 
 }
 func (s *taskServer) GetTask(ctx context.Context, req *taskv1.GetTaskRequest) (*taskv1.Task, error) {
 	// Query ใช้ reader connection ตาม CQRS ส่วน policy ยังคงอยู่ใน use case เดียวกับการอ่านข้อมูล
+	if req == nil || !validID(req.GetId()) {
+		return nil, status.Error(codes.InvalidArgument, "id must be a UUID")
+	}
 	u, r := actor(ctx)
 	var t task
 	var ok bool
@@ -184,6 +187,9 @@ func (s *taskServer) UpdateTask(ctx context.Context, req *taskv1.UpdateTaskReque
 	// Mutation ใช้ writer และสร้าง outbox event ใน transaction เดียวกันเหมือน CreateTask
 	// เพื่อไม่ให้สถานะ Task เปลี่ยนแต่ downstream analytics/activity ไม่ได้รับ event
 	u, r := actor(ctx)
+	if req == nil || !validID(req.GetId()) {
+		return nil, status.Error(codes.InvalidArgument, "id must be a UUID")
+	}
 	if strings.TrimSpace(req.Title) == "" || !map[string]bool{"todo": true, "doing": true, "done": true}[req.Status] {
 		return nil, status.Error(codes.InvalidArgument, "title and status are required")
 	}
@@ -232,6 +238,9 @@ func (s *taskServer) UpdateTask(ctx context.Context, req *taskv1.UpdateTaskReque
 	return toProto(t), nil
 }
 func (s *taskServer) DeleteTask(ctx context.Context, req *taskv1.DeleteTaskRequest) (*taskv1.Empty, error) {
+	if req == nil || !validID(req.GetId()) {
+		return nil, status.Error(codes.InvalidArgument, "id must be a UUID")
+	}
 	u, r := actor(ctx)
 	var t task
 	if s.writer != nil {
@@ -295,6 +304,7 @@ func (s *taskServer) enqueue(e outboxEvent) {
 func toProto(t task) *taskv1.Task {
 	return &taskv1.Task{Id: t.ID, OwnerId: t.OwnerID, Title: t.Title, Description: t.Description, Status: t.Status, CreatedAt: t.CreatedAt.Format(time.RFC3339), UpdatedAt: t.UpdatedAt.Format(time.RFC3339)}
 }
+func validID(id string) bool { _, err := uuid.Parse(id); return err == nil }
 func (s *taskServer) publishOutbox(ctx context.Context, brokers string) {
 	// Outbox worker แยก lifecycle จาก gRPC request: ผู้ใช้รอเพียง DB commit ส่วน Kafka retry ภายหลังได้
 	var w *kafka.Writer
