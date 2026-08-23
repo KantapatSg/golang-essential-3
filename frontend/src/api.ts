@@ -1,4 +1,4 @@
-import type { Activity, Task, TokenResponse } from './types'
+import type { Activity, AnalyticsSummary, StatusCount, Task, TimeseriesPoint, TokenResponse } from './types'
 
 let accessToken: string | null = null
 export const setAccessToken = (token: string | null) => { accessToken = token }
@@ -23,4 +23,8 @@ export const api = {
   updateTask: (id: string, payload: Pick<Task, 'title' | 'description' | 'status'>) => request<Task>(`/api/v1/tasks/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteTask: (id: string) => request<void>(`/api/v1/tasks/${id}`, { method: 'DELETE' }),
   activities: () => request<Activity[]>('/api/v1/activities'),
+  analyticsSummary: () => request<AnalyticsSummary>('/api/v1/analytics/summary'),
+  analyticsTimeseries: () => request<{ points: TimeseriesPoint[]; generated_at: string; data_through: string }>('/api/v1/analytics/timeseries'),
+  analyticsStatuses: () => request<{ statuses: StatusCount[]; generated_at: string; data_through: string }>('/api/v1/analytics/statuses'),
+  gatewayHealth: () => request<{ status: string }>('/health/ready'),
 }

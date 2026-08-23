@@ -11,3 +11,5 @@ scrape_configs:
     static_configs: [{ targets: ['activity-service:9103'] }]
   - job_name: analytics
     static_configs: [{ targets: ['analytics-service:9104'] }]
+  - job_name: analytics-worker
+    static_configs: [{ targets: ['analytics-worker:9105'] }]

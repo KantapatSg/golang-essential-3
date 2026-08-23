@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	identityv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/identity/v1"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -27,6 +28,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -35,6 +37,7 @@ var migrationSQL string
 
 //go:embed migrations/002_indexes.sql
 var migration2SQL string
+var loginSuccess, loginFailure atomic.Uint64
 
 type user struct {
 	ID           string `gorm:"type:uuid;primaryKey"`
@@ -59,18 +62,22 @@ func (s *identityServer) Login(ctx context.Context, req *identityv1.LoginRequest
 	email := strings.ToLower(strings.TrimSpace(req.Email))
 	if s.db != nil {
 		if err := s.db.WithContext(ctx).Where("email = ?", email).First(&u).Error; err != nil {
+			loginFailure.Add(1)
 			return nil, status.Error(codes.Unauthenticated, "invalid credentials")
 		}
 	} else {
 		var ok bool
 		u, ok = s.users[email]
 		if !ok {
+			loginFailure.Add(1)
 			return nil, status.Error(codes.Unauthenticated, "invalid credentials")
 		}
 	}
 	if bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(req.Password)) != nil {
+		loginFailure.Add(1)
 		return nil, status.Error(codes.Unauthenticated, "invalid credentials")
 	}
+	loginSuccess.Add(1)
 	return s.issue(ctx, u)
 }
 func (s *identityServer) issue(ctx context.Context, u user) (*identityv1.TokenResponse, error) {
@@ -282,7 +289,9 @@ func startHealthServer(ctx context.Context, addr string) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ready"}`))
 	})
-	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("service_ready 1\n")) })
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintf(w, "service_ready 1\nidentity_login_success_total %d\nidentity_login_failure_total %d\n", loginSuccess.Load(), loginFailure.Load())
+	})
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		<-ctx.Done()

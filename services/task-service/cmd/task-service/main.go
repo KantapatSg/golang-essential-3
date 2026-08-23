@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	taskv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/task/v1"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -22,6 +23,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -30,19 +32,22 @@ var migrationSQL string
 
 //go:embed migrations/002_indexes.sql
 var migration2SQL string
+var outboxPending, outboxPublished, outboxPublishFailed atomic.Uint64
 
 type task struct {
-	ID                   string `gorm:"type:uuid;primaryKey"`
-	OwnerID              string `gorm:"type:uuid;index"`
-	Title                string
-	Description          string
-	Status               string
+	ID                   string `gorm:"type:uuid;primaryKey" json:"id"`
+	OwnerID              string `gorm:"type:uuid;index" json:"owner_id"`
+	Title                string `json:"title"`
+	Description          string `json:"description"`
+	Status               string `json:"status"`
 	CreatedAt, UpdatedAt time.Time
 }
 type outboxEvent struct {
-	EventID, EventType string
-	Task               task
-	OccurredAt         time.Time
+	SchemaVersion int       `json:"schema_version"`
+	EventID       string    `json:"event_id"`
+	EventType     string    `json:"event_type"`
+	Task          task      `json:"task"`
+	OccurredAt    time.Time `json:"occurred_at"`
 }
 type outboxRow struct {
 	EventID     string `gorm:"type:uuid;primaryKey"`
@@ -161,7 +166,7 @@ func (s *taskServer) CreateTask(ctx context.Context, req *taskv1.CreateTaskReque
 	}
 	now := time.Now().UTC()
 	t := task{ID: uuid.NewString(), OwnerID: u, Title: title, Description: strings.TrimSpace(req.Description), Status: "todo", CreatedAt: now, UpdatedAt: now}
-	event := outboxEvent{EventID: uuid.NewString(), EventType: "task.created", Task: t, OccurredAt: now}
+	event := outboxEvent{SchemaVersion: 1, EventID: uuid.NewString(), EventType: "task.created", Task: t, OccurredAt: now}
 	if s.writer != nil {
 		b, _ := json.Marshal(event)
 		// command และ outbox row commit ใน transaction เดียวกัน จึงไม่เกิด task สำเร็จแต่ event หาย
@@ -217,7 +222,7 @@ func (s *taskServer) UpdateTask(ctx context.Context, req *taskv1.UpdateTaskReque
 	t.Description = strings.TrimSpace(req.Description)
 	t.Status = req.Status
 	t.UpdatedAt = time.Now().UTC()
-	event := outboxEvent{EventID: uuid.NewString(), EventType: "task.updated", Task: t, OccurredAt: t.UpdatedAt}
+	event := outboxEvent{SchemaVersion: 1, EventID: uuid.NewString(), EventType: "task.updated", Task: t, OccurredAt: t.UpdatedAt}
 	if s.writer != nil {
 		b, _ := json.Marshal(event)
 		if e := s.writer.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -262,7 +267,7 @@ func (s *taskServer) DeleteTask(ctx context.Context, req *taskv1.DeleteTaskReque
 	if r != "admin" && t.OwnerID != u {
 		return nil, status.Error(codes.PermissionDenied, "task ownership required")
 	}
-	event := outboxEvent{EventID: uuid.NewString(), EventType: "task.deleted", Task: t, OccurredAt: time.Now().UTC()}
+	event := outboxEvent{SchemaVersion: 1, EventID: uuid.NewString(), EventType: "task.deleted", Task: t, OccurredAt: time.Now().UTC()}
 	if s.writer != nil {
 		b, _ := json.Marshal(event)
 		if e := s.writer.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -328,16 +333,20 @@ func (s *taskServer) publishOutbox(ctx context.Context, brokers string) {
 				log.Printf("outbox poll: %v", e)
 				continue
 			}
+			outboxPending.Store(uint64(len(rows)))
 			for _, row := range rows {
 				if w == nil {
+					outboxPublishFailed.Add(1)
 					continue
 				}
 				if e := w.WriteMessages(ctx, kafka.Message{Key: []byte(row.EventID), Value: []byte(row.Payload)}); e != nil {
+					outboxPublishFailed.Add(1)
 					log.Printf("outbox publish retry event=%s: %v", row.EventID, e)
 					continue
 				}
 				now := time.Now().UTC()
 				_ = s.writer.WithContext(ctx).Model(&outboxRow{}).Where("event_id = ? AND published_at IS NULL", row.EventID).Update("published_at", now).Error
+				outboxPublished.Add(1)
 			}
 		}
 	}
@@ -431,7 +440,9 @@ func startHealthServer(ctx context.Context, addr string) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ready"}`))
 	})
-	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("service_ready 1\n")) })
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintf(w, "service_ready 1\noutbox_pending_events %d\noutbox_publish_total %d\noutbox_publish_failed_total %d\n", outboxPending.Load(), outboxPublished.Load(), outboxPublishFailed.Load())
+	})
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		<-ctx.Done()

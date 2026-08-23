@@ -16,15 +16,65 @@ import (
 )
 
 type taskEvent struct {
-	EventID   string `json:"event_id"`
-	EventType string `json:"event_type"`
-	Task      struct {
+	SchemaVersion int    `json:"schema_version"`
+	EventID       string `json:"event_id"`
+	EventType     string `json:"event_type"`
+	Task          struct {
 		ID      string `json:"ID"`
 		OwnerID string `json:"OwnerID"`
 		Status  string `json:"Status"`
 	} `json:"Task"`
 	OccurredAt time.Time `json:"occurred_at"`
 }
+
+// Task Service's native JSON payloads historically used Go field names while
+// the public event contract uses snake_case. Accept both during the v1
+// transition so replaying an existing outbox never drops an event.
+func (e *taskEvent) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	read := func(keys ...string) json.RawMessage {
+		for _, key := range keys {
+			if value, ok := raw[key]; ok {
+				return value
+			}
+		}
+		return nil
+	}
+	if value := read("schema_version", "SchemaVersion"); len(value) > 0 {
+		_ = json.Unmarshal(value, &e.SchemaVersion)
+	}
+	if value := read("event_id", "EventID"); len(value) > 0 {
+		_ = json.Unmarshal(value, &e.EventID)
+	}
+	if value := read("event_type", "EventType"); len(value) > 0 {
+		_ = json.Unmarshal(value, &e.EventType)
+	}
+	if value := read("occurred_at", "OccurredAt"); len(value) > 0 {
+		_ = json.Unmarshal(value, &e.OccurredAt)
+	}
+	var taskRaw map[string]json.RawMessage
+	if value := read("task", "Task"); len(value) > 0 {
+		if err := json.Unmarshal(value, &taskRaw); err != nil {
+			return err
+		}
+	}
+	for key, target := range map[string]*string{"ID": &e.Task.ID, "OwnerID": &e.Task.OwnerID, "Status": &e.Task.Status} {
+		if value, ok := taskRaw[key]; ok {
+			_ = json.Unmarshal(value, target)
+		} else if value, ok := taskRaw[strings.ToLower(key)]; ok {
+			_ = json.Unmarshal(value, target)
+		} else if key == "OwnerID" {
+			if value, ok := taskRaw["owner_id"]; ok {
+				_ = json.Unmarshal(value, target)
+			}
+		}
+	}
+	return nil
+}
+
 type worker struct {
 	endpoint  string
 	http      *http.Client
@@ -37,6 +87,9 @@ func (w *worker) validate(b []byte) (taskEvent, error) {
 	var e taskEvent
 	if err := json.Unmarshal(b, &e); err != nil {
 		return e, fmt.Errorf("invalid JSON: %w", err)
+	}
+	if e.SchemaVersion > 1 {
+		return e, fmt.Errorf("unsupported event schema version %d", e.SchemaVersion)
 	}
 	if e.EventID == "" || e.EventType == "" || e.Task.ID == "" {
 		return e, errors.New("event_id, event_type and task.id are required")
@@ -109,18 +162,45 @@ func (w *worker) run(ctx context.Context, brokers string) error {
 	batch := make([]kafka.Message, 0, 50)
 	flush := time.NewTicker(2 * time.Second)
 	defer flush.Stop()
+	type fetched struct {
+		message kafka.Message
+		err     error
+	}
+	fetchedCh := make(chan fetched, 1)
+	fetchCtx, fetchCancel := context.WithCancel(ctx)
+	defer fetchCancel()
+	go func() {
+		for {
+			message, err := reader.FetchMessage(fetchCtx)
+			select {
+			case fetchedCh <- fetched{message: message, err: err}:
+			case <-fetchCtx.Done():
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
 	for {
 		select {
 		case <-ctx.Done():
-			return w.flush(ctx, reader, batch)
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			return w.flush(shutdownCtx, reader, batch)
 		case <-flush.C:
 			if err := w.flush(ctx, reader, batch); err != nil {
 				return err
 			}
 			batch = batch[:0]
-		default:
-			m, err := reader.FetchMessage(ctx)
+		case result := <-fetchedCh:
+			m, err := result.message, result.err
 			if err != nil {
+				if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+					shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+					return w.flush(shutdownCtx, reader, batch)
+				}
 				return err
 			}
 			e, err := w.validate(m.Value)
@@ -166,8 +246,37 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 	w := &worker{endpoint: os.Getenv("CLICKHOUSE_URL"), http: &http.Client{Timeout: 5 * time.Second}}
+	health := &http.Server{Addr: env("ANALYTICS_WORKER_HTTP_ADDR", ":9105"), Handler: workerMetrics(w)}
+	go func() {
+		if err := health.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("worker health: %v", err)
+		}
+	}()
 	if err := w.run(ctx, os.Getenv("KAFKA_BROKERS")); err != nil && !errors.Is(err, context.Canceled) {
 		log.Printf("analytics worker stopped: %v", err)
 	}
+	shutdownCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+	defer stop()
+	_ = health.Shutdown(shutdownCtx)
 	log.Printf("analytics worker processed=%d retries=%d dlq=%d", w.processed.Load(), w.retries.Load(), w.dlq.Load())
+}
+func workerMetrics(w *worker) http.Handler {
+	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health/live", "/health/ready":
+			rw.WriteHeader(http.StatusOK)
+			_, _ = rw.Write([]byte(`{"status":"ok"}`))
+		case "/metrics":
+			rw.Header().Set("Content-Type", "text/plain; version=0.0.4")
+			_, _ = fmt.Fprintf(rw, "analytics_processed_events_total %d\nanalytics_retry_total %d\nanalytics_dlq_total %d\n", w.processed.Load(), w.retries.Load(), w.dlq.Load())
+		default:
+			http.NotFound(rw, r)
+		}
+	})
+}
+func env(k, d string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return d
 }

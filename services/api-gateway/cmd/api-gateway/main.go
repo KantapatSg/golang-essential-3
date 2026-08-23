@@ -27,6 +27,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -49,6 +50,9 @@ type taskBody struct {
 	Description string `json:"description"`
 	Status      string `json:"status"`
 }
+
+var httpRequests atomic.Uint64
+var httpDurationNanos atomic.Uint64
 
 func main() {
 	idAddr := env("IDENTITY_ADDR", "localhost:50051")
@@ -83,7 +87,10 @@ func main() {
 	app.Get("/health/live", func(c *fiber.Ctx) error { return c.JSON(fiber.Map{"status": "ok"}) })
 	app.Get("/health/ready", func(c *fiber.Ctx) error { return c.JSON(fiber.Map{"status": "ready"}) })
 	// Metrics intentionally expose only low-cardinality operational names; IDs belong in logs.
-	app.Get("/metrics", func(c *fiber.Ctx) error { c.Type("text"); return c.SendString("service_ready 1\n") })
+	app.Get("/metrics", func(c *fiber.Ctx) error {
+		c.Type("text")
+		return c.SendString(fmt.Sprintf("service_ready 1\nhttp_requests_total %d\nhttp_request_duration_seconds_total %f\n", httpRequests.Load(), float64(httpDurationNanos.Load())/1e9))
+	})
 	app.Get("/healthz", func(c *fiber.Ctx) error { return c.Redirect("/health/live", fiber.StatusTemporaryRedirect) })
 	g.routes(app)
 	addr := env("GATEWAY_ADDR", ":8080")
@@ -395,6 +402,8 @@ func pagination(c *fiber.Ctx) (int, int, error) {
 	return page, size, nil
 }
 func requestID(c *fiber.Ctx) error {
+	started := time.Now()
+	defer func() { httpRequests.Add(1); httpDurationNanos.Add(uint64(time.Since(started).Nanoseconds())) }()
 	if c.Get("X-Request-ID") == "" {
 		c.Set("X-Request-ID", uuid.NewString())
 	}

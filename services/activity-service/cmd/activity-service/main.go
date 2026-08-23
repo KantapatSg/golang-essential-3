@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	activityv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/activity/v1"
 	"github.com/google/uuid"
 	"github.com/segmentio/kafka-go"
@@ -20,6 +21,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -28,16 +30,76 @@ var migrationSQL string
 
 //go:embed migrations/002_indexes.sql
 var migration2SQL string
+var activityProcessed, activityFailed, activityDuplicate atomic.Uint64
 
 type activity struct {
 	ID, EventID, EventType, TaskID, ActorID string
 	OccurredAt                              time.Time
 }
 type eventPayload struct {
-	EventID, EventType string
-	Task               struct{ ID, OwnerID string }
-	OccurredAt         time.Time
+	SchemaVersion int
+	EventID       string
+	EventType     string
+	Task          struct{ ID, OwnerID string }
+	OccurredAt    time.Time
 }
+
+// Unmarshal both the versioned snake_case envelope and Project 2's native Go
+// field names so old outbox rows remain replayable during the contract change.
+func (p *eventPayload) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		SchemaVersion    int       `json:"schema_version"`
+		LegacySchema     int       `json:"SchemaVersion"`
+		EventID          string    `json:"event_id"`
+		LegacyEventID    string    `json:"EventID"`
+		EventType        string    `json:"event_type"`
+		LegacyEventType  string    `json:"EventType"`
+		OccurredAt       time.Time `json:"occurred_at"`
+		LegacyOccurredAt time.Time `json:"OccurredAt"`
+		Task             struct {
+			ID          string `json:"id"`
+			LegacyID    string `json:"ID"`
+			OwnerID     string `json:"owner_id"`
+			LegacyOwner string `json:"OwnerID"`
+		} `json:"task"`
+		LegacyTask struct {
+			ID      string `json:"ID"`
+			OwnerID string `json:"OwnerID"`
+		} `json:"Task"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	p.SchemaVersion = raw.SchemaVersion
+	if p.SchemaVersion == 0 {
+		p.SchemaVersion = raw.LegacySchema
+	}
+	p.EventID, p.EventType, p.OccurredAt = raw.EventID, raw.EventType, raw.OccurredAt
+	if p.EventID == "" {
+		p.EventID = raw.LegacyEventID
+	}
+	if p.EventType == "" {
+		p.EventType = raw.LegacyEventType
+	}
+	if p.OccurredAt.IsZero() {
+		p.OccurredAt = raw.LegacyOccurredAt
+	}
+	p.Task.ID, p.Task.OwnerID = raw.Task.ID, raw.Task.OwnerID
+	if p.Task.ID == "" {
+		p.Task.ID = raw.Task.LegacyID
+	}
+	if p.Task.OwnerID == "" {
+		p.Task.OwnerID = raw.Task.LegacyOwner
+	}
+	if p.Task.ID == "" {
+		p.Task.ID = raw.LegacyTask.ID
+	}
+	if p.Task.OwnerID == "" {
+		p.Task.OwnerID = raw.LegacyTask.OwnerID
+	}
+	return nil
+}
+
 type activityRow struct {
 	ID         string `gorm:"type:uuid;primaryKey"`
 	EventID    string `gorm:"type:uuid;uniqueIndex"`
@@ -128,14 +190,17 @@ func (s *activityServer) consume(ctx context.Context, brokers string) {
 			return
 		}
 		var p eventPayload
-		if json.Unmarshal(m.Value, &p) != nil || p.EventID == "" {
+		if json.Unmarshal(m.Value, &p) != nil || p.SchemaVersion > 1 || p.EventID == "" || p.EventType == "" || p.Task.ID == "" {
+			activityFailed.Add(1)
 			log.Printf("DLQ task.events.v1 offset=%d: invalid payload", m.Offset)
 			continue
 		}
 		if e = s.recordEvent(ctx, p); e != nil {
+			activityFailed.Add(1)
 			log.Printf("activity event retry event=%s: %v", p.EventID, e)
 			continue
 		}
+		activityProcessed.Add(1)
 		// Commit หลัง transaction สำเร็จ: ถ้า DB ล่ม event เดิมจะถูกส่งซ้ำและ idempotency กันซ้ำให้เอง
 		if e = r.CommitMessages(ctx, m); e != nil {
 			log.Printf("activity offset commit retry: %v", e)
@@ -208,7 +273,9 @@ func startHealthServer(ctx context.Context, addr string) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ready"}`))
 	})
-	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("service_ready 1\n")) })
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintf(w, "service_ready 1\nkafka_consumer_messages_total{consumer=\"activity\"} %d\nkafka_consumer_failures_total{consumer=\"activity\"} %d\n", activityProcessed.Load(), activityFailed.Load())
+	})
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		<-ctx.Done()
