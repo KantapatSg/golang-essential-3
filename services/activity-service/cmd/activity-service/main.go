@@ -180,7 +180,7 @@ func (s *activityServer) consume(ctx context.Context, brokers string) {
 	if strings.TrimSpace(brokers) == "" {
 		return
 	}
-	r := kafka.NewReader(kafka.ReaderConfig{Brokers: strings.Split(brokers, ","), Topic: "task.events.v1", GroupID: "activity-service-v1", MinBytes: 1, MaxBytes: 10 << 20})
+	r := kafka.NewReader(activityReaderConfig(brokers))
 	defer r.Close()
 	for {
 		m, e := r.FetchMessage(ctx)
@@ -207,6 +207,15 @@ func (s *activityServer) consume(ctx context.Context, brokers string) {
 		if e = r.CommitMessages(ctx, m); e != nil {
 			log.Printf("activity offset commit retry: %v", e)
 		}
+	}
+}
+
+func activityReaderConfig(brokers string) kafka.ReaderConfig {
+	return kafka.ReaderConfig{
+		Brokers: strings.Split(brokers, ","), Topic: "task.events.v1", GroupID: "activity-service-v1",
+		MinBytes: 1, MaxBytes: 10 << 20, StartOffset: kafka.FirstOffset,
+		// Topic อาจถูก auto-create หลัง group เริ่ม จึงต้อง watch partition เพื่อไม่ค้าง assignment ว่าง
+		WatchPartitionChanges: true, PartitionWatchInterval: time.Second,
 	}
 }
 func openDB(ctx context.Context, dsn string) (*gorm.DB, error) {

@@ -24,6 +24,16 @@ services:
     # kafka-topics starts a JVM for each probe, so Docker Desktop can need more
     # than five seconds even after the broker is accepting connections.
     healthcheck: { test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"], interval: 10s, timeout: 15s, retries: 20 }
+  kafka-init:
+    # สร้าง topic ก่อน consumer group เพื่อกัน startup race ที่ทำให้ group ได้ assignment ว่างถาวร
+    image: apache/kafka:3.8.1
+    depends_on: { kafka: { condition: service_healthy } }
+    entrypoint: ["/bin/sh"]
+    command:
+      - -c
+      - >-
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic task.events.v1 --partitions 1 --replication-factor 1
+        && /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic task.events.v1.dlq --partitions 1 --replication-factor 1
   clickhouse:
     # Pin the LTS minor line while using the Debian-based image. The Alpine
     # variant can share a stale containerd layer on some Docker Desktop builds.
@@ -66,7 +76,10 @@ services:
       TASK_DB_READ_DSN: "postgres://app:app@postgres:5432/task_db?sslmode=disable"
       REDIS_ADDR: "redis:6379"
       KAFKA_BROKERS: "kafka:9092"
-    depends_on: { postgres: { condition: service_healthy }, redis: { condition: service_healthy }, kafka: { condition: service_healthy } }
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      kafka-init: { condition: service_completed_successfully }
     ports: ["127.0.0.1:50052:50052"]
   activity-service:
     build: { context: .., dockerfile: deploy/Dockerfile, args: { SERVICE: activity-service } }
@@ -74,7 +87,9 @@ services:
       ACTIVITY_ADDR: ":50053"
       ACTIVITY_DB_DSN: "postgres://app:app@postgres:5432/activity_db?sslmode=disable"
       KAFKA_BROKERS: "kafka:9092"
-    depends_on: { postgres: { condition: service_healthy }, kafka: { condition: service_healthy } }
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka-init: { condition: service_completed_successfully }
     ports: ["127.0.0.1:50053:50053"]
   analytics-service:
     build: { context: .., dockerfile: deploy/Dockerfile, args: { SERVICE: analytics-service } }
@@ -84,7 +99,9 @@ services:
   analytics-worker:
     build: { context: .., dockerfile: deploy/Dockerfile, args: { SERVICE: analytics-worker } }
     environment: { KAFKA_BROKERS: "kafka:9092", CLICKHOUSE_URL: "http://app:app@clickhouse:8123", ANALYTICS_WORKER_HTTP_ADDR: ":9105" }
-    depends_on: { kafka: { condition: service_healthy }, clickhouse: { condition: service_healthy } }
+    depends_on:
+      kafka-init: { condition: service_completed_successfully }
+      clickhouse: { condition: service_healthy }
   api-gateway:
     build: { context: .., dockerfile: deploy/Dockerfile, args: { SERVICE: api-gateway } }
     environment:

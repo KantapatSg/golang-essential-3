@@ -165,7 +165,7 @@ func (w *worker) run(ctx context.Context, brokers string) error {
 		<-ctx.Done()
 		return nil
 	}
-	reader := kafka.NewReader(kafka.ReaderConfig{Brokers: strings.Split(brokers, ","), Topic: "task.events.v1", GroupID: "analytics-service-v1", MinBytes: 1, MaxBytes: 10 << 20})
+	reader := kafka.NewReader(analyticsReaderConfig(brokers))
 	defer reader.Close()
 	dlq := &kafka.Writer{Addr: kafka.TCP(strings.Split(brokers, ",")...), Topic: "task.events.v1.dlq", Balancer: &kafka.LeastBytes{}}
 	defer dlq.Close()
@@ -234,6 +234,15 @@ func (w *worker) run(ctx context.Context, brokers string) error {
 			}
 			_ = e
 		}
+	}
+}
+
+func analyticsReaderConfig(brokers string) kafka.ReaderConfig {
+	return kafka.ReaderConfig{
+		Brokers: strings.Split(brokers, ","), Topic: "task.events.v1", GroupID: "analytics-service-v1",
+		MinBytes: 1, MaxBytes: 10 << 20, StartOffset: kafka.FirstOffset,
+		// Topic อาจถูก auto-create หลัง group เริ่ม จึงต้อง watch partition เพื่อไม่ค้าง assignment ว่าง
+		WatchPartitionChanges: true, PartitionWatchInterval: time.Second,
 	}
 }
 func (w *worker) flush(ctx context.Context, reader *kafka.Reader, batch []kafka.Message) error {

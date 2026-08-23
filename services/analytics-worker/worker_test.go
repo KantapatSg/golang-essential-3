@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/segmentio/kafka-go"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -27,6 +28,15 @@ func TestValidateAcceptsLegacyGoEnvelope(t *testing.T) {
 	e, err := w.validate([]byte(raw))
 	if err != nil || e.EventID != "e2" || e.Task.OwnerID != "u2" {
 		t.Fatalf("legacy payload not decoded: %#v %v", e, err)
+	}
+}
+func TestAnalyticsReaderWatchesTopicsCreatedAfterStartup(t *testing.T) {
+	config := analyticsReaderConfig("kafka:9092")
+	if !config.WatchPartitionChanges {
+		t.Fatal("consumer must watch partitions created after group startup")
+	}
+	if config.PartitionWatchInterval <= 0 || config.StartOffset != kafka.FirstOffset {
+		t.Fatalf("unexpected reader recovery settings: interval=%s offset=%d", config.PartitionWatchInterval, config.StartOffset)
 	}
 }
 func TestInsertBatchAndFailure(t *testing.T) {
