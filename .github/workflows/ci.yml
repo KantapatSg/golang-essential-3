@@ -34,6 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
       - run: docker compose -f deploy/docker-compose.yml config --quiet
       - name: Secret scan
         uses: gitleaks/gitleaks-action@v2
