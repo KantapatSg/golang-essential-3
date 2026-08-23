@@ -116,6 +116,7 @@ ClickHouse projection, Prometheus targets และ Grafana health แล้ว 
 Local clean-volume: PASS — compose acceptance ok events=1 (Kafka topic init enabled)
 GitHub Actions: PASS — run 32652675076
   backend, frontend, compose+gitleaks และ integration jobs ทั้งหมดเขียว
+GitHub Actions tag: PASS — run 32653171124 for `v0.1.0-predeploy`
 ```
 
 ## 6. Evidence Format
