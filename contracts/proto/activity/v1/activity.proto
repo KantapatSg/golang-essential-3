@@ -1,0 +1,8 @@
+syntax = "proto3";
+package activity.v1;
+option go_package = "github.com/KantapatSg/golang-essential-3/contracts/gen/go/activity/v1;activityv1";
+
+service ActivityService { rpc ListActivities(ListActivitiesRequest) returns (ListActivitiesResponse); }
+message Activity { string id = 1; string event_id = 2; string event_type = 3; string task_id = 4; string actor_id = 5; string occurred_at = 6; }
+message ListActivitiesRequest {}
+message ListActivitiesResponse { repeated Activity activities = 1; }

@@ -1,0 +1,66 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment: { POSTGRES_USER: app, POSTGRES_PASSWORD: app, POSTGRES_DB: app }
+    volumes: [ ./postgres-init:/docker-entrypoint-initdb.d:ro ]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U app -d app"], interval: 5s, timeout: 3s, retries: 20 }
+  redis:
+    image: redis:7-alpine
+    healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 5s, timeout: 3s, retries: 20 }
+  zookeeper:
+    image: bitnami/zookeeper:3.9
+    environment: { ALLOW_ANONYMOUS_LOGIN: "yes" }
+  kafka:
+    image: bitnami/kafka:3.8
+    depends_on: { zookeeper: { condition: service_started } }
+    environment:
+      KAFKA_CFG_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+    healthcheck: { test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"], interval: 10s, timeout: 5s, retries: 20 }
+  identity-service:
+    build: { context: .., dockerfile: deploy/Dockerfile, args: { SERVICE: identity-service } }
+    environment:
+      IDENTITY_ADDR: ":50051"
+      IDENTITY_DB_DSN: "postgres://app:app@postgres:5432/identity_db?sslmode=disable"
+      REDIS_ADDR: "redis:6379"
+      JWT_PRIVATE_KEY_PATH: /keys/private.pem
+      JWT_PUBLIC_KEY_PATH: /keys/public.pem
+    volumes: [ keys:/keys ]
+    depends_on: { postgres: { condition: service_healthy }, redis: { condition: service_healthy } }
+    ports: ["127.0.0.1:50051:50051"]
+  task-service:
+    build: { context: .., dockerfile: deploy/Dockerfile, args: { SERVICE: task-service } }
+    environment:
+      TASK_ADDR: ":50052"
+      TASK_DB_WRITE_DSN: "postgres://app:app@postgres:5432/task_db?sslmode=disable"
+      TASK_DB_READ_DSN: "postgres://app:app@postgres:5432/task_db?sslmode=disable"
+      REDIS_ADDR: "redis:6379"
+      KAFKA_BROKERS: "kafka:9092"
+    depends_on: { postgres: { condition: service_healthy }, redis: { condition: service_healthy }, kafka: { condition: service_healthy } }
+    ports: ["127.0.0.1:50052:50052"]
+  activity-service:
+    build: { context: .., dockerfile: deploy/Dockerfile, args: { SERVICE: activity-service } }
+    environment:
+      ACTIVITY_ADDR: ":50053"
+      ACTIVITY_DB_DSN: "postgres://app:app@postgres:5432/activity_db?sslmode=disable"
+      KAFKA_BROKERS: "kafka:9092"
+    depends_on: { postgres: { condition: service_healthy }, kafka: { condition: service_healthy } }
+    ports: ["127.0.0.1:50053:50053"]
+  api-gateway:
+    build: { context: .., dockerfile: deploy/Dockerfile, args: { SERVICE: api-gateway } }
+    environment:
+      GATEWAY_ADDR: ":8080"
+      IDENTITY_ADDR: "identity-service:50051"
+      TASK_ADDR: "task-service:50052"
+      ACTIVITY_ADDR: "activity-service:50053"
+      JWT_PUBLIC_KEY_PATH: /keys/public.pem
+    volumes: [ keys:/keys:ro ]
+    depends_on:
+      identity-service: { condition: service_started }
+      task-service: { condition: service_started }
+      activity-service: { condition: service_started }
+    ports: ["8080:8080"]
+volumes:
+  keys:

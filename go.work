@@ -1,0 +1,9 @@
+go 1.23.4
+
+use (
+	./contracts
+	./services/activity-service
+	./services/api-gateway
+	./services/identity-service
+	./services/task-service
+)

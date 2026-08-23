@@ -1,0 +1,10 @@
+syntax = "proto3";
+package identity.v1;
+option go_package = "github.com/KantapatSg/golang-essential-3/contracts/gen/go/identity/v1;identityv1";
+
+service IdentityService { rpc Login(LoginRequest) returns (TokenResponse); rpc Refresh(RefreshRequest) returns (TokenResponse); rpc Logout(LogoutRequest) returns (Empty); }
+message LoginRequest { string email = 1; string password = 2; }
+message RefreshRequest { string refresh_token = 1; }
+message LogoutRequest { string refresh_token = 1; }
+message TokenResponse { string access_token = 1; string refresh_token = 2; string token_type = 3; int64 expires_in = 4; string user_id = 5; string role = 6; }
+message Empty {}
