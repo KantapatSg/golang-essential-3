@@ -2,10 +2,10 @@
 
 Portfolio project สำหรับเรียนรู้ Go Microservices แบบ end-to-end โดยต่อยอด source code จาก `golang-essential-2` และเพิ่ม Frontend, ClickHouse analytics, Prometheus metrics, Grafana dashboards และแผน deploy บน Render
 
-> สถานะปัจจุบัน: **G1–G9 ผ่าน local verification + GitHub CI; กำลังสร้าง pre-deploy tag**
+> สถานะปัจจุบัน: **G1–G9 ผ่าน local verification + GitHub CI; Phase 10 complete ที่ `v0.1.0-predeploy`**
 >
 > Local Compose acceptance ผ่าน Browser/API/Event/ClickHouse/Prometheus/Grafana และ restart
-> persistence แล้ว; public repository และ clean-clone CI ผ่านแล้ว (run `32652675076`); ยังไม่เริ่ม Render Phase 11
+> persistence แล้ว; public repository และ clean-clone CI ผ่านแล้ว (runs `32652675076`, `32652993690`); ยังไม่เริ่ม Render Phase 11
 
 ## เป้าหมายระบบ
 

@@ -2,7 +2,7 @@
 
 > Design status: **100% implementation-ready**
 >
-> Runtime status: **G1–G9 ผ่าน local evidence และ GitHub CI; กำลังสร้าง pre-deploy tag ของ Phase 10** — ใช้
+> Runtime status: **G1–G9 ผ่าน local evidence และ GitHub CI; Phase 10 complete ที่ `v0.1.0-predeploy`** — ใช้
 > [25_PHASE_CONTEXT_RESUME.md](25_PHASE_CONTEXT_RESUME.md) เป็นสถานะล่าสุด และใช้
 > [24_TEST_ACCEPTANCE_MATRIX.md](24_TEST_ACCEPTANCE_MATRIX.md) เป็นหลักฐาน acceptance
 
@@ -14,7 +14,7 @@
 | 1–7 | Verified locally (G1–G7) |
 | 8 | Verified core gates (fault-injection/moderate/race follow-up) |
 | 9 | Verified locally (clean Compose + projections + restart) |
-| 10 | CI green; tag closeout |
+| 10 | Verified — `v0.1.0-predeploy` |
 | 11 | Hold — user approval required |
 
 ก่อนเริ่มแต่ละ Phase ให้อ่าน Context/Goal, gap ID และ test ID ที่เกี่ยวข้องจากเอกสาร

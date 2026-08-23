@@ -8,10 +8,10 @@
 
 ```text
 Updated: 2026-08-23 23:52 GMT+7
-Branch: main
-HEAD: `69b72a4` (`fix: make Kafka projections deterministic at startup`)
+Release tag: `v0.1.0-predeploy` -> `802ee8c`
+Branch: `main` docs closeout after the tagged candidate
 Design package: 100% implementation-ready
-Implementation: G1-G9 verified locally and in GitHub CI; Phase 10 tag/docs closeout
+Implementation: G1-G9 verified locally and in GitHub CI; Phase 10 complete
 Deploy: not started; Phase 11 hold remains active
 ```
 
@@ -52,7 +52,7 @@ overwrite โดยไม่อ่าน diff
 | 7 Grafana | dashboards/alerts/runbook | Verified | Grafana 11.5.2 `/api/health` ok, provisioning files loaded | panel query assertion เป็น follow-up |
 | 8 Quality/security | failure tests + dependency security | Verified (core gates) | T-GO/T-FE/T-E2E ผ่าน, npm high/critical ผ่าน, CI clean clone ผ่าน | fault-injection, 2 moderate และ race ที่ต้อง runner เปิด CGO เป็น follow-up |
 | 9 Production-like local | clean Compose + persistence | Verified | T-COMPOSE/T-RESTART, `compose acceptance ok events=2`, restart `2->2` | ไม่มี local blocker |
-| 10 GitHub readiness | public portfolio repo/CI/tag | Verified pending final tag | public repo, clean-clone CI run `32652675076` green, secret scan ผ่าน | push evidence docs แล้วสร้าง pre-deploy tag |
+| 10 GitHub readiness | public portfolio repo/CI/tag | Verified | public repo, CI runs `32652675076` and `32652993690` green, secret scan ผ่าน, tag `v0.1.0-predeploy` | Hold before Render Phase 11 |
 | 11 Render | public deployment | Hold | design only | ทำหลังผู้ใช้อนุมัติ budget/provider/env |
 
 ## Verified Evidence So Far
@@ -80,6 +80,8 @@ PASS T-COMPOSE clean-volume Compose acceptance: `events=4` (รวม ClickHouse
 PASS T-RESTART task/analytics restart preserved ClickHouse rows: `events=2->2`
 PASS 2026-08-23 23:46 GMT+7 clean-volume acceptance after Kafka topic init: `compose acceptance ok events=1`
 PASS 2026-08-23 23:48 GMT+7 GitHub Actions clean-clone CI run `32652675076` (backend/frontend/compose+gitleaks/integration) green
+PASS 2026-08-23 23:56 GMT+7 GitHub Actions docs closeout run `32652993690` green
+PASS 2026-08-23 23:57 GMT+7 annotated tag `v0.1.0-predeploy` pushed to public repository at commit `802ee8c`
 ```
 
 ยังไม่ Verified:
@@ -91,7 +93,6 @@ Cookie rotation/logout browser session and Redis failure matrix
 Dependency audit remediation (2 moderate React Router advisories)
 Race suite in CGO-enabled runner
 Render deployment
-pre-deploy tag (Phase 10 closeout)
 ```
 
 ## Exact Resume Point
@@ -107,7 +108,7 @@ Luna High ให้เริ่มจากลำดับนี้เท่า�
 7. รัน one-pass Phase 9 และบันทึก test IDs จาก `24_TEST_ACCEPTANCE_MATRIX.md`
 8. อัปเดต `16_IMPLEMENTATION_PHASES.md`, `18_DEFINITION_OF_DONE.md` และไฟล์นี้
 9. Commit แบบ phase-scoped แล้วทำ Phase 10 GitHub
-10. Phase 10 CI ผ่านแล้ว; สร้าง pre-deploy tag และหยุดก่อน Phase 11
+10. Phase 10 complete (`v0.1.0-predeploy`); หยุดก่อน Phase 11
 
 ## Bounded Debug Rule
 
