@@ -65,7 +65,7 @@ try {
   if (-not $activityReady) { throw 'activity projection did not become visible' }
 
   $analyticsReady = $false
-  for ($i = 0; $i -lt 30; $i++) {
+  for ($i = 0; $i -lt 60; $i++) {
     try {
       $summary = Invoke-RestMethod "$base/api/v1/analytics/summary" -Headers $headers
       if ($summary.total_events -ge 1) { $analyticsReady = $true; break }
@@ -89,6 +89,11 @@ try {
   $rows = (& docker compose -f deploy/docker-compose.yml exec -T clickhouse clickhouse-client --query "SELECT count() FROM analytics.task_events FINAL").Trim()
   if ([int64]$rows -lt 1) { throw 'ClickHouse has no projected events' }
   Write-Host "compose acceptance ok events=$rows"
+} catch {
+  Write-Host 'compose acceptance failed; collecting focused diagnostics'
+  & docker compose -f deploy/docker-compose.yml ps
+  & docker compose -f deploy/docker-compose.yml logs --tail=120 analytics-worker analytics-service task-service kafka clickhouse
+  throw
 } finally {
   & docker compose -f deploy/docker-compose.yml down
 }
