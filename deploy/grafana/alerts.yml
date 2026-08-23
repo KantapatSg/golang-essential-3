@@ -2,7 +2,7 @@ groups:
   - name: signal-ledger
     rules:
       - alert: ServiceNotReady
-        expr: service_ready == 0
+        expr: up == 0 or service_ready == 0
         for: 2m
         labels: { severity: warning }
         annotations: { summary: "Service is not ready", impact: "Requests may fail or be routed away", runbook: "docs/21_OBSERVABILITY_RUNBOOK.md#service-not-ready" }
@@ -11,3 +11,8 @@ groups:
         for: 5m
         labels: { severity: warning }
         annotations: { summary: "Analytics ingestion delay is high", impact: "Dashboard data is stale", runbook: "docs/21_OBSERVABILITY_RUNBOOK.md#analytics-delay" }
+      - alert: KafkaConsumerLagHigh
+        expr: kafka_consumer_lag > 100
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "Kafka consumer lag is high", impact: "Activity or analytics projections are stale", runbook: "docs/21_OBSERVABILITY_RUNBOOK.md#analytics-delay" }

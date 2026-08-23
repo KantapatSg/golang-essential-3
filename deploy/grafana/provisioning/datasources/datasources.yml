@@ -11,3 +11,9 @@ datasources:
     url: http://clickhouse:8123
     jsonData:
       defaultDatabase: analytics
+      host: clickhouse:8123
+      port: 8123
+      protocol: http
+      username: app
+    secureJsonData:
+      password: app

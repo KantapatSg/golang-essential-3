@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	_ "embed"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	identityv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/identity/v1"
 	taskv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/task/v1"
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -83,13 +85,18 @@ func main() {
 	g := &gateway{identity: identityv1.NewIdentityServiceClient(idc), tasks: taskv1.NewTaskServiceClient(tc), activities: activityv1.NewActivityServiceClient(ac), analytics: analyticsv1.NewAnalyticsServiceClient(anc), public: loadPublic(env("JWT_PUBLIC_KEY_PATH", "deploy/keys/public.pem"))}
 	app := fiber.New(fiber.Config{AppName: "golang-essential-3"})
 	app.Use(recover.New())
+	app.Use(cors.New(cors.Config{
+		AllowOrigins:     env("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173"),
+		AllowCredentials: true,
+		AllowHeaders:     "Origin, Content-Type, Accept, Authorization, X-Request-ID",
+	}))
 	app.Use(requestID)
 	app.Get("/health/live", func(c *fiber.Ctx) error { return c.JSON(fiber.Map{"status": "ok"}) })
 	app.Get("/health/ready", func(c *fiber.Ctx) error { return c.JSON(fiber.Map{"status": "ready"}) })
 	// Metrics intentionally expose only low-cardinality operational names; IDs belong in logs.
 	app.Get("/metrics", func(c *fiber.Ctx) error {
 		c.Type("text")
-		return c.SendString(fmt.Sprintf("service_ready 1\nhttp_requests_total %d\nhttp_request_duration_seconds_total %f\n", httpRequests.Load(), float64(httpDurationNanos.Load())/1e9))
+		return c.SendString(fmt.Sprintf("# HELP service_ready Whether the gateway can accept traffic.\n# TYPE service_ready gauge\nservice_ready 1\n# HELP http_requests_total Total HTTP requests.\n# TYPE http_requests_total counter\nhttp_requests_total %d\n# HELP http_request_duration_seconds_total Total HTTP request duration.\n# TYPE http_request_duration_seconds_total counter\nhttp_request_duration_seconds_total %f\n", httpRequests.Load(), float64(httpDurationNanos.Load())/1e9))
 	})
 	app.Get("/healthz", func(c *fiber.Ctx) error { return c.Redirect("/health/live", fiber.StatusTemporaryRedirect) })
 	g.routes(app)
@@ -125,7 +132,7 @@ func (g *gateway) routes(app *fiber.App) {
 	protected.Get("/analytics/statuses", g.analyticsStatuses)
 	app.Get("/openapi.yaml", func(c *fiber.Ctx) error { c.Type("yaml"); return c.SendString(openAPI) })
 	app.Get("/swagger/", func(c *fiber.Ctx) error {
-		return c.Type("html").SendString("<!doctype html><title>Swagger</title><p>OpenAPI: <a href='/openapi.yaml'>/openapi.yaml</a></p>")
+		return c.Type("html").SendString(swaggerUIHTML)
 	})
 }
 func (g *gateway) login(c *fiber.Ctx) error {
@@ -164,19 +171,24 @@ func (g *gateway) refresh(c *fiber.Ctx) error {
 	// Refresh credentials are session secrets: prefer an HttpOnly cookie so browser
 	// JavaScript cannot exfiltrate them. JSON is retained for non-browser API clients.
 	if r.RefreshToken != "" {
-		c.Cookie(&fiber.Cookie{Name: "refresh_token", Value: r.RefreshToken, HTTPOnly: true, Secure: env("COOKIE_SECURE", "false") == "true", SameSite: "Lax", Path: "/api/v1/auth", MaxAge: int(7 * 24 * time.Hour.Seconds())})
+		c.Cookie(&fiber.Cookie{Name: "refresh_token", Value: r.RefreshToken, HTTPOnly: true, Secure: env("COOKIE_SECURE", "false") == "true", SameSite: "Lax", Path: "/api/v1/auth", Domain: env("COOKIE_DOMAIN", ""), MaxAge: int(7 * 24 * time.Hour.Seconds())})
 	}
 	return c.JSON(r)
 }
 func (g *gateway) logout(c *fiber.Ctx) error {
 	var b refreshBody
 	_ = c.BodyParser(&b)
+	if strings.TrimSpace(b.RefreshToken) == "" {
+		b.RefreshToken = c.Cookies("refresh_token")
+	}
 	ctx, cancel := rpcCtx(c)
 	defer cancel()
 	_, e := g.identity.Logout(ctx, &identityv1.LogoutRequest{RefreshToken: b.RefreshToken})
 	if e != nil {
 		return grpcHTTP(c, e)
 	}
+	// ลบ cookie ด้วย Path/Domain เดียวกับตอนออก token ไม่เช่นนั้น browser จะเก็บ session secret ไว้
+	c.Cookie(&fiber.Cookie{Name: "refresh_token", Value: "", HTTPOnly: true, Secure: env("COOKIE_SECURE", "false") == "true", SameSite: "Lax", Path: "/api/v1/auth", Domain: env("COOKIE_DOMAIN", ""), MaxAge: -1, Expires: time.Unix(1, 0).UTC()})
 	return c.SendStatus(204)
 }
 func (g *gateway) auth(c *fiber.Ctx) error {
@@ -423,9 +435,14 @@ func loadPublic(path string) *rsa.PublicKey {
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	// Local-only fallback lets the gateway boot without the identity volume; compose normally shares the real key.
-	k, _ := rsa.GenerateKey(rand.Reader, 1024)
-	return &k.PublicKey
+	if strings.EqualFold(os.Getenv("DEV_MODE"), "true") {
+		// DEV_MODE เท่านั้นที่ยอมใช้ key ชั่วคราวสำหรับ unit test; production ต้อง fail fast
+		// เพราะ fallback key ทำให้ token จาก Identity ตรวจลายเซ็นไม่ผ่านและปิดบัง config ผิดพลาด
+		k, _ := rsa.GenerateKey(rand.Reader, 1024)
+		return &k.PublicKey
+	}
+	log.Fatalf("JWT public key is required: %s", path)
+	return nil
 }
 func env(k, d string) string {
 	if v := os.Getenv(k); v != "" {
@@ -435,18 +452,13 @@ func env(k, d string) string {
 }
 func waitSignal() { ch := make(chan os.Signal, 1); signal.Notify(ch, os.Interrupt); <-ch }
 
-var openAPI = `openapi: 3.0.3
-info:
-  title: golang-essential-3 API
-  version: 1.0.0
-paths:
-  /health/live: {get: {responses: {'200': {description: ok}}}}
-  /health/ready: {get: {responses: {'200': {description: ready}}}}
-  /healthz: {get: {responses: {'307': {description: legacy redirect}}}}
-  /api/v1/auth/login: {post: {responses: {'200': {description: token}}}}
-  /api/v1/tasks: {get: {responses: {'200': {description: paginated tasks}}}, post: {responses: {'201': {description: task}}}}
-  /api/v1/tasks/{id}: {get: {responses: {'200': {description: task}, '404': {description: not found}}}, put: {responses: {'200': {description: task}}}, delete: {responses: {'204': {description: deleted}}}}
-  /api/v1/analytics/summary: {get: {responses: {'200': {description: admin summary}, '403': {description: forbidden}}}}
-  /api/v1/analytics/timeseries: {get: {responses: {'200': {description: admin timeseries}}}}
-  /api/v1/analytics/statuses: {get: {responses: {'200': {description: admin statuses}}}}
-`
+//go:embed openapi.yaml
+var openAPI string
+
+const swaggerUIHTML = `<!doctype html>
+<html><head><meta charset="utf-8"><title>golang-essential-3 Swagger</title>
+<link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css"></head>
+<body><div id="swagger-ui"></div>
+<script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+<script>window.ui = SwaggerUIBundle({url: '/openapi.yaml', dom_id: '#swagger-ui', deepLinking: true});</script>
+</body></html>`

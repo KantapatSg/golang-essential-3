@@ -2,8 +2,10 @@
 
 Portfolio project สำหรับเรียนรู้ Go Microservices แบบ end-to-end โดยต่อยอด source code จาก `golang-essential-2` และเพิ่ม Frontend, ClickHouse analytics, Prometheus metrics, Grafana dashboards และแผน deploy บน Render
 
-> สถานะปัจจุบัน: **Local implementation complete through Phase 10 hold point**  
-> Backend, frontend, analytics, observability, CI และ production-like Compose มีใน source แล้ว; provider-backed ClickHouse/Kafka smoke ต้องยืนยันด้วย Docker runtime
+> สถานะปัจจุบัน: **G1–G9 ผ่าน local verification; กำลังปิด Phase 10**
+>
+> Local Compose acceptance ผ่าน Browser/API/Event/ClickHouse/Prometheus/Grafana และ restart
+> persistence แล้ว เหลือ public GitHub, clean-clone CI และ pre-deploy tag; ยังไม่เริ่ม Render Phase 11
 
 ## เป้าหมายระบบ
 
@@ -45,6 +47,10 @@ Grafana ---------------------------> ClickHouse datasource
 - Frontend unit/component/E2E tests
 - CI pipeline, dashboards, alerts/runbook และ production-like local environment
 - เอกสาร interview, cost และ use-case flow ที่ครอบคลุม Browser ถึง ClickHouse/Grafana
+
+หลักฐานล่าสุดอยู่ใน [Local Verification](docs/22_LOCAL_VERIFICATION.md) และ
+[Phase Context & Resume](docs/25_PHASE_CONTEXT_RESUME.md); moderate dependency advisories และ
+race test ที่ต้องใช้ CGO ถูกบันทึกเป็น follow-up ไม่ปกปิดเป็น pass
 
 ## ตรวจ baseline ก่อนเริ่ม implement
 
@@ -88,6 +94,9 @@ Frontend อยู่ที่ `http://localhost:3000`, Gateway ที่ `http:
 | [Commenting Guide](docs/17_COMMENTING_GUIDE.md) | จุดใดต้องมี comment และควรอธิบายแบบไหน |
 | [Definition of Done](docs/18_DEFINITION_OF_DONE.md) | เกณฑ์ตัดสินว่า implement เสร็จจริง |
 | [Interview Guide](docs/19_INTERVIEW_GUIDE.md) | ใช้อธิบาย architecture และ trade-off อย่างไร |
+| [Master Blueprint](docs/23_MASTER_BLUEPRINT.md) | Product overview, architecture, service flow, stack และเหตุผลทั้งหมด |
+| [Test & Acceptance Matrix](docs/24_TEST_ACCEPTANCE_MATRIX.md) | แต่ละส่วนต้องทดสอบอะไรและเก็บหลักฐานอย่างไร |
+| [Phase Context & Resume](docs/25_PHASE_CONTEXT_RESUME.md) | สถานะจริง จุดค้าง และวิธีกลับมาทำต่อเมื่อ task/token ถูกตัด |
 
 ## กติกาการส่งมอบ
 

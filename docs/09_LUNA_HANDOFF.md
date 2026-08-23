@@ -1,6 +1,23 @@
 # Luna High Handoff
 
-อ่านตามลำดับ: `README.md` -> `00_OVERVIEW_MINDMAP.md` -> `16_IMPLEMENTATION_PHASES.md` -> เอกสาร feature ของ phase ที่กำลังทำ -> `18_DEFINITION_OF_DONE.md`
+อ่านตามลำดับ: `README.md` -> `23_MASTER_BLUEPRINT.md` ->
+`25_PHASE_CONTEXT_RESUME.md` -> `16_IMPLEMENTATION_PHASES.md` ->
+เอกสาร feature ของ phase ที่กำลังทำ -> `24_TEST_ACCEPTANCE_MATRIX.md` ->
+`18_DEFINITION_OF_DONE.md`
+
+ห้าม infer สถานะจากการมีไฟล์ใน repository ให้ใช้สามคำนี้เสมอ:
+
+- `Implemented` = มี source/config แล้ว
+- `Verified` = มีคำสั่งและผลทดสอบยืนยัน
+- `Done` = acceptance ของ phase ผ่านครบและเอกสารอัปเดตแล้ว
+
+## Implementation Mission
+
+Implement และ verify G1–G9 จาก `23_MASTER_BLUEPRINT.md` ตาม phase order โดยใช้ test ID
+จาก `24_TEST_ACCEPTANCE_MATRIX.md` ทุก behavior change ต้องมี focused regression test,
+comment เฉพาะ decision/invariant/failure boundary และ evidence ใน
+`25_PHASE_CONTEXT_RESUME.md` จากนั้นทำ Phase 10 public GitHub/CI/tag แล้วหยุดก่อน Render
+Phase 11 ห้าม re-design architecture หรือเพิ่ม stack นอก scope ถ้า acceptance เดิมยังไม่ต้องใช้
 
 ## จุดที่ต้องรักษาไว้
 
@@ -31,6 +48,10 @@
 [ ] ตรวจ admin/member policy
 [ ] ตรวจ README และ docs ภาษาไทย
 [ ] ตรวจ Frontend/ClickHouse/Prometheus/Grafana ตาม phase ที่เสร็จ
+[ ] ตรวจ production frontend route `/api` และ `/openapi.yaml` ผ่าน Nginx/Render จริง
+[ ] ตรวจ Swagger UI และ OpenAPI ครบทุก public endpoint
+[ ] ตรวจ readiness ตาม dependency ไม่ใช่ตอบ ready แบบคงที่
+[ ] ตรวจ ClickHouse duplicate event ไม่ทำให้ aggregate นับซ้ำ
 [ ] ตรวจว่า implementation ตรงกับ comment และ diagram
 [ ] git status clean
 ```

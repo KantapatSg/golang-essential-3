@@ -1,15 +1,17 @@
 global:
   scrape_interval: 15s
+rule_files:
+  - /etc/prometheus/alerts.yml
 scrape_configs:
   - job_name: gateway
-    static_configs: [{ targets: ['api-gateway:8080'] }]
+    static_configs: [{ targets: ['api-gateway:8080'], labels: { service: gateway } }]
   - job_name: identity
-    static_configs: [{ targets: ['identity-service:9101'] }]
+    static_configs: [{ targets: ['identity-service:9101'], labels: { service: identity } }]
   - job_name: task
-    static_configs: [{ targets: ['task-service:9102'] }]
+    static_configs: [{ targets: ['task-service:9102'], labels: { service: task } }]
   - job_name: activity
-    static_configs: [{ targets: ['activity-service:9103'] }]
+    static_configs: [{ targets: ['activity-service:9103'], labels: { service: activity } }]
   - job_name: analytics
-    static_configs: [{ targets: ['analytics-service:9104'] }]
+    static_configs: [{ targets: ['analytics-service:9104'], labels: { service: analytics } }]
   - job_name: analytics-worker
-    static_configs: [{ targets: ['analytics-worker:9105'] }]
+    static_configs: [{ targets: ['analytics-worker:9105'], labels: { service: analytics_worker } }]

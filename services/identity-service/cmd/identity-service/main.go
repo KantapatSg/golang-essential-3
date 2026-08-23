@@ -187,6 +187,9 @@ func loadKeys(privPath, pubPath string) (*rsa.PrivateKey, error) {
 			}
 		}
 	}
+	if !isDev() {
+		return nil, fmt.Errorf("JWT key pair is required in production: %s", privPath)
+	}
 	k, e := rsa.GenerateKey(rand.Reader, 2048)
 	if e != nil {
 		return nil, e
@@ -254,7 +257,21 @@ func main() {
 		log.Fatal(e)
 	}
 	srv := &identityServer{db: db, redis: rc, users: devUsers, signer: signer, accessTTL: durationEnv("ACCESS_TTL", 15*time.Minute), refreshTTL: durationEnv("REFRESH_TTL", 7*24*time.Hour), devSessions: map[string]string{}}
-	startHealthServer(ctx, env("IDENTITY_HTTP_ADDR", ":9101"))
+	startHealthServer(ctx, env("IDENTITY_HTTP_ADDR", ":9101"), func(checkCtx context.Context) error {
+		if db != nil {
+			sqlDB, err := db.DB()
+			if err != nil {
+				return err
+			}
+			if err = sqlDB.PingContext(checkCtx); err != nil {
+				return err
+			}
+		}
+		if rc != nil && rc.Ping(checkCtx).Err() != nil {
+			return errors.New("redis unavailable")
+		}
+		return nil
+	})
 	addr := os.Getenv("IDENTITY_ADDR")
 	if addr == "" {
 		addr = ":50051"
@@ -279,18 +296,25 @@ func main() {
 		_ = rc.Close()
 	}
 }
-func startHealthServer(ctx context.Context, addr string) {
+func startHealthServer(ctx context.Context, addr string, ready func(context.Context) error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health/live", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 	mux.HandleFunc("/health/ready", func(w http.ResponseWriter, _ *http.Request) {
+		checkCtx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+		defer cancel()
+		if err := ready(checkCtx); err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"status":"not_ready"}`))
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ready"}`))
 	})
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = fmt.Fprintf(w, "service_ready 1\nidentity_login_success_total %d\nidentity_login_failure_total %d\n", loginSuccess.Load(), loginFailure.Load())
+		_, _ = fmt.Fprintf(w, "# HELP service_ready Whether the identity service can accept traffic.\n# TYPE service_ready gauge\nservice_ready 1\n# HELP identity_login_success_total Successful login attempts.\n# TYPE identity_login_success_total counter\nidentity_login_success_total %d\n# HELP identity_login_failure_total Failed login attempts.\n# TYPE identity_login_failure_total counter\nidentity_login_failure_total %d\n", loginSuccess.Load(), loginFailure.Load())
 	})
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {

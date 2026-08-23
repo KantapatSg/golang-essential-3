@@ -407,7 +407,29 @@ func main() {
 		log.Fatal(e)
 	}
 	s := &taskServer{data: map[string]task{}, cache: map[string][]task{}, outbox: make(chan outboxEvent, 128), writer: writer, reader: reader, redis: rc}
-	startHealthServer(ctx, env("TASK_HTTP_ADDR", ":9102"))
+	startHealthServer(ctx, env("TASK_HTTP_ADDR", ":9102"), func(checkCtx context.Context) error {
+		if writer == nil {
+			return nil
+		}
+		writerSQL, err := writer.DB()
+		if err != nil {
+			return err
+		}
+		if err = writerSQL.PingContext(checkCtx); err != nil {
+			return err
+		}
+		if reader != nil {
+			readerSQL, err := reader.DB()
+			if err != nil {
+				return err
+			}
+			if err = readerSQL.PingContext(checkCtx); err != nil {
+				return err
+			}
+		}
+		// Redis is a cache optimization; query code can fall back to the reader DB.
+		return nil
+	})
 	go s.publishOutbox(ctx, os.Getenv("KAFKA_BROKERS"))
 	g := grpc.NewServer(grpc.UnaryInterceptor(deadlineInterceptor))
 	taskv1.RegisterTaskServiceServer(g, s)
@@ -430,18 +452,25 @@ func main() {
 		_ = rc.Close()
 	}
 }
-func startHealthServer(ctx context.Context, addr string) {
+func startHealthServer(ctx context.Context, addr string, ready func(context.Context) error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health/live", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 	mux.HandleFunc("/health/ready", func(w http.ResponseWriter, _ *http.Request) {
+		checkCtx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+		defer cancel()
+		if err := ready(checkCtx); err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"status":"not_ready"}`))
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ready"}`))
 	})
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = fmt.Fprintf(w, "service_ready 1\noutbox_pending_events %d\noutbox_publish_total %d\noutbox_publish_failed_total %d\n", outboxPending.Load(), outboxPublished.Load(), outboxPublishFailed.Load())
+		_, _ = fmt.Fprintf(w, "# HELP service_ready Whether the task service can accept traffic.\n# TYPE service_ready gauge\nservice_ready 1\n# HELP outbox_pending_events Events waiting for Kafka publish.\n# TYPE outbox_pending_events gauge\noutbox_pending_events %d\n# HELP outbox_publish_total Successfully published outbox events.\n# TYPE outbox_publish_total counter\noutbox_publish_total %d\n# HELP outbox_publish_failed_total Failed outbox publish attempts.\n# TYPE outbox_publish_failed_total counter\noutbox_publish_failed_total %d\n", outboxPending.Load(), outboxPublished.Load(), outboxPublishFailed.Load())
 	})
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {

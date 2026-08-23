@@ -76,11 +76,13 @@ func (e *taskEvent) UnmarshalJSON(data []byte) error {
 }
 
 type worker struct {
-	endpoint  string
-	http      *http.Client
-	processed atomic.Uint64
-	retries   atomic.Uint64
-	dlq       atomic.Uint64
+	endpoint          string
+	http              *http.Client
+	processed         atomic.Uint64
+	retries           atomic.Uint64
+	dlq               atomic.Uint64
+	lastEventUnixNano atomic.Int64
+	consumerLag       atomic.Int64
 }
 
 func (w *worker) validate(b []byte) (taskEvent, error) {
@@ -112,7 +114,10 @@ func (w *worker) insert(ctx context.Context, events []taskEvent) error {
 	}
 	var body strings.Builder
 	for _, e := range events {
-		b, _ := json.Marshal(map[string]any{"event_id": e.EventID, "event_type": e.EventType, "task_id": e.Task.ID, "actor_id": e.Task.OwnerID, "task_status": e.Task.Status, "occurred_at": e.OccurredAt.UTC().Format(time.RFC3339Nano), "payload_json": string(mustJSON(e))})
+		// ClickHouse DateTime64 รับรูปแบบ datetime แบบไม่มี RFC3339 suffix; แปลงตรงนี้
+		// เป็น boundary เดียวก่อนส่ง batch เพื่อไม่ให้ event ที่ valid ถูก reject ทั้งชุด
+		occurredAt := e.OccurredAt.UTC().Format("2006-01-02 15:04:05.000")
+		b, _ := json.Marshal(map[string]any{"event_id": e.EventID, "event_type": e.EventType, "task_id": e.Task.ID, "actor_id": e.Task.OwnerID, "task_status": e.Task.Status, "occurred_at": occurredAt, "payload_json": string(mustJSON(e))})
 		body.Write(b)
 		body.WriteByte('\n')
 	}
@@ -129,6 +134,11 @@ func (w *worker) insert(ctx context.Context, events []taskEvent) error {
 		return fmt.Errorf("clickhouse status %s", resp.Status)
 	}
 	w.processed.Add(uint64(len(events)))
+	for _, event := range events {
+		if event.OccurredAt.UnixNano() > w.lastEventUnixNano.Load() {
+			w.lastEventUnixNano.Store(event.OccurredAt.UnixNano())
+		}
+	}
 	return nil
 }
 func mustJSON(v any) []byte { b, _ := json.Marshal(v); return b }
@@ -195,6 +205,7 @@ func (w *worker) run(ctx context.Context, brokers string) error {
 			batch = batch[:0]
 		case result := <-fetchedCh:
 			m, err := result.message, result.err
+			w.consumerLag.Store(int64(reader.Stats().Lag))
 			if err != nil {
 				if errors.Is(err, context.Canceled) && ctx.Err() != nil {
 					shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -246,7 +257,36 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 	w := &worker{endpoint: os.Getenv("CLICKHOUSE_URL"), http: &http.Client{Timeout: 5 * time.Second}}
-	health := &http.Server{Addr: env("ANALYTICS_WORKER_HTTP_ADDR", ":9105"), Handler: workerMetrics(w)}
+	brokers := strings.TrimSpace(os.Getenv("KAFKA_BROKERS"))
+	ready := func(checkCtx context.Context) error {
+		if w.endpoint == "" {
+			if strings.EqualFold(os.Getenv("DEV_MODE"), "true") {
+				return nil
+			}
+			return errors.New("CLICKHOUSE_URL is required")
+		}
+		req, err := http.NewRequestWithContext(checkCtx, http.MethodGet, strings.TrimRight(w.endpoint, "/")+"/ping", nil)
+		if err != nil {
+			return err
+		}
+		resp, err := w.http.Do(req)
+		if err != nil {
+			return err
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			return fmt.Errorf("clickhouse status %s", resp.Status)
+		}
+		if brokers == "" {
+			return nil
+		}
+		conn, err := (&kafka.Dialer{Timeout: 500 * time.Millisecond}).DialContext(checkCtx, "tcp", strings.TrimSpace(strings.Split(brokers, ",")[0]))
+		if err != nil {
+			return err
+		}
+		return conn.Close()
+	}
+	health := &http.Server{Addr: env("ANALYTICS_WORKER_HTTP_ADDR", ":9105"), Handler: workerMetrics(w, ready)}
 	go func() {
 		if err := health.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Printf("worker health: %v", err)
@@ -260,15 +300,32 @@ func main() {
 	_ = health.Shutdown(shutdownCtx)
 	log.Printf("analytics worker processed=%d retries=%d dlq=%d", w.processed.Load(), w.retries.Load(), w.dlq.Load())
 }
-func workerMetrics(w *worker) http.Handler {
+func workerMetrics(w *worker, ready func(context.Context) error) http.Handler {
 	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/health/live", "/health/ready":
+		case "/health/live":
 			rw.WriteHeader(http.StatusOK)
 			_, _ = rw.Write([]byte(`{"status":"ok"}`))
+		case "/health/ready":
+			checkCtx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+			defer cancel()
+			if err := ready(checkCtx); err != nil {
+				rw.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = rw.Write([]byte(`{"status":"not_ready"}`))
+				return
+			}
+			rw.WriteHeader(http.StatusOK)
+			_, _ = rw.Write([]byte(`{"status":"ready"}`))
 		case "/metrics":
 			rw.Header().Set("Content-Type", "text/plain; version=0.0.4")
-			_, _ = fmt.Fprintf(rw, "analytics_processed_events_total %d\nanalytics_retry_total %d\nanalytics_dlq_total %d\n", w.processed.Load(), w.retries.Load(), w.dlq.Load())
+			delay := 0.0
+			if eventAt := w.lastEventUnixNano.Load(); eventAt > 0 {
+				delay = time.Since(time.Unix(0, eventAt)).Seconds()
+				if delay < 0 {
+					delay = 0
+				}
+			}
+			_, _ = fmt.Fprintf(rw, "# HELP service_ready Whether the analytics worker dependencies are reachable.\n# TYPE service_ready gauge\nservice_ready 1\n# HELP analytics_processed_events_total Events written to ClickHouse.\n# TYPE analytics_processed_events_total counter\nanalytics_processed_events_total %d\n# HELP analytics_retry_total ClickHouse retry attempts.\n# TYPE analytics_retry_total counter\nanalytics_retry_total %d\n# HELP analytics_dlq_total Invalid events routed to DLQ.\n# TYPE analytics_dlq_total counter\nanalytics_dlq_total %d\n# HELP analytics_ingestion_delay_seconds Age of the newest processed event.\n# TYPE analytics_ingestion_delay_seconds gauge\nanalytics_ingestion_delay_seconds %f\n# HELP kafka_consumer_lag Messages behind the end of the Kafka partition.\n# TYPE kafka_consumer_lag gauge\nkafka_consumer_lag{consumer=\"analytics\"} %d\n", w.processed.Load(), w.retries.Load(), w.dlq.Load(), delay, w.consumerLag.Load())
 		default:
 			http.NotFound(rw, r)
 		}

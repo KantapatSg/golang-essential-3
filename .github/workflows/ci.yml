@@ -9,12 +9,14 @@ jobs:
         with: { go-version: '1.23' }
       - name: Test all Go modules
         shell: pwsh
+        env: { SKIP_FRONTEND: '1' }
         run: ./scripts/test.ps1
       - name: Vet all Go modules
         shell: pwsh
         run: ./scripts/vet.ps1
       - name: Build services
         shell: pwsh
+        env: { SKIP_FRONTEND: '1' }
         run: ./scripts/build.ps1
   frontend:
     runs-on: ubuntu-latest
@@ -24,6 +26,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: npm, cache-dependency-path: frontend/package-lock.json }
       - run: npm ci
+      - run: npm audit --audit-level=high
       - run: npm run lint
       - run: npm test
       - run: npm run build
@@ -35,3 +38,11 @@ jobs:
       - name: Secret scan
         uses: gitleaks/gitleaks-action@v2
         env: { GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}' }
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compose acceptance
+        shell: pwsh
+        run: ./scripts/compose-acceptance.ps1

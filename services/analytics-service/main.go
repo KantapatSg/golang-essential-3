@@ -30,6 +30,22 @@ type clickhouseStore struct {
 	client   *http.Client
 }
 
+func (s *clickhouseStore) Ping(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(s.endpoint, "/")+"/ping", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("clickhouse status %s", resp.Status)
+	}
+	return nil
+}
+
 func (s *clickhouseStore) Query(ctx context.Context, sql string) ([][]string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.endpoint, strings.NewReader(sql+" FORMAT JSONEachRow"))
 	if err != nil {
@@ -145,7 +161,7 @@ func (s *analyticsServer) Summary(ctx context.Context, req *analyticsv1.SummaryR
 	}
 	var response analyticsv1.SummaryResponse
 	if s.store != nil {
-		rows, queryErr := s.store.Query(ctx, fmt.Sprintf("SELECT event_type,count() FROM analytics.task_events WHERE occurred_at >= parseDateTimeBestEffort('%s') AND occurred_at < parseDateTimeBestEffort('%s') GROUP BY event_type", from, to))
+		rows, queryErr := s.store.Query(ctx, fmt.Sprintf("SELECT event_type,count() FROM analytics.task_events FINAL WHERE occurred_at >= parseDateTimeBestEffort('%s') AND occurred_at < parseDateTimeBestEffort('%s') GROUP BY event_type", from, to))
 		err = queryErr
 		if err != nil {
 			s.observe(started, err)
@@ -186,7 +202,7 @@ func (s *analyticsServer) Timeseries(ctx context.Context, req *analyticsv1.Times
 	}
 	points := map[string]*analyticsv1.TimeseriesPoint{}
 	if s.store != nil {
-		rows, queryErr := s.store.Query(ctx, fmt.Sprintf("SELECT toDate(occurred_at),event_type,count() FROM analytics.task_events WHERE occurred_at >= parseDateTimeBestEffort('%s') AND occurred_at < parseDateTimeBestEffort('%s') GROUP BY toDate(occurred_at),event_type ORDER BY toDate(occurred_at) LIMIT %d", from, to, limit))
+		rows, queryErr := s.store.Query(ctx, fmt.Sprintf("SELECT toDate(occurred_at),event_type,count() FROM analytics.task_events FINAL WHERE occurred_at >= parseDateTimeBestEffort('%s') AND occurred_at < parseDateTimeBestEffort('%s') GROUP BY toDate(occurred_at),event_type ORDER BY toDate(occurred_at) LIMIT %d", from, to, limit))
 		err = queryErr
 		if err != nil {
 			s.observe(started, err)
@@ -234,7 +250,7 @@ func (s *analyticsServer) Statuses(ctx context.Context, req *analyticsv1.Statuse
 	}
 	statuses := make([]*analyticsv1.StatusCount, 0)
 	if s.store != nil {
-		rows, queryErr := s.store.Query(ctx, fmt.Sprintf("SELECT task_status,count() FROM analytics.task_events WHERE occurred_at >= parseDateTimeBestEffort('%s') AND occurred_at < parseDateTimeBestEffort('%s') GROUP BY task_status ORDER BY count() DESC LIMIT %d", from, to, limit))
+		rows, queryErr := s.store.Query(ctx, fmt.Sprintf("SELECT task_status,count() FROM analytics.task_events FINAL WHERE occurred_at >= parseDateTimeBestEffort('%s') AND occurred_at < parseDateTimeBestEffort('%s') GROUP BY task_status ORDER BY count() DESC LIMIT %d", from, to, limit))
 		err = queryErr
 		if err != nil {
 			s.observe(started, err)
@@ -268,7 +284,11 @@ func main() {
 	}
 	g := grpc.NewServer()
 	analyticsv1.RegisterAnalyticsServiceServer(g, srv)
-	health := &http.Server{Addr: env("ANALYTICS_HTTP_ADDR", ":9104"), Handler: metricsHandler(srv)}
+	ready := func(checkCtx context.Context) error { return nil }
+	if ch, ok := store.(*clickhouseStore); ok {
+		ready = ch.Ping
+	}
+	health := &http.Server{Addr: env("ANALYTICS_HTTP_ADDR", ":9104"), Handler: metricsHandler(srv, ready)}
 	go func() {
 		if err := health.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Printf("analytics health: %v", err)
@@ -286,17 +306,24 @@ func main() {
 		log.Fatal(err)
 	}
 }
-func metricsHandler(s *analyticsServer) http.Handler {
+func metricsHandler(s *analyticsServer, ready func(context.Context) error) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/health/live":
 			w.WriteHeader(200)
 			_, _ = w.Write([]byte(`{"status":"ok"}`))
 		case "/health/ready":
+			checkCtx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+			defer cancel()
+			if err := ready(checkCtx); err != nil {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte(`{"status":"not_ready"}`))
+				return
+			}
 			w.WriteHeader(200)
 			_, _ = w.Write([]byte(`{"status":"ready"}`))
 		case "/metrics":
-			_, _ = fmt.Fprintf(w, "analytics_grpc_requests_total %d\nanalytics_query_errors_total %d\nanalytics_query_duration_seconds_total %f\n", s.requests.Load(), s.queryErrors.Load(), float64(s.queryDurationNanos.Load())/1e9)
+			_, _ = fmt.Fprintf(w, "# HELP service_ready Whether the analytics service can accept traffic.\n# TYPE service_ready gauge\nservice_ready 1\n# HELP analytics_grpc_requests_total Analytics RPC requests.\n# TYPE analytics_grpc_requests_total counter\nanalytics_grpc_requests_total %d\n# HELP analytics_query_errors_total Analytics query failures.\n# TYPE analytics_query_errors_total counter\nanalytics_query_errors_total %d\n# HELP analytics_query_duration_seconds_total Total analytics query duration.\n# TYPE analytics_query_duration_seconds_total counter\nanalytics_query_duration_seconds_total %f\n", s.requests.Load(), s.queryErrors.Load(), float64(s.queryDurationNanos.Load())/1e9)
 		default:
 			http.NotFound(w, r)
 		}

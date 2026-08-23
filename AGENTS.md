@@ -2,14 +2,18 @@
 
 ## Current state
 
-The repository contains a working Project 2 backend baseline plus the Project 3 design pack. Frontend, Analytics/ClickHouse, Prometheus, Grafana, CI, and Render deployment are not implemented yet.
+The repository already contains the Project 2 backend baseline, Project 3 frontend,
+Analytics/ClickHouse services, Prometheus/Grafana artifacts, CI, and local Compose.
+Source presence is not the same as runtime verification. Read the status ledger before
+changing code so unfinished acceptance gates are not mistaken for missing features.
 
 ## Source of truth
 
-1. Read `README.md` and `docs/00_OVERVIEW_MINDMAP.md`.
-2. Work in the order defined by `docs/16_IMPLEMENTATION_PHASES.md`.
-3. Use `docs/18_DEFINITION_OF_DONE.md` as the acceptance gate.
-4. Follow `docs/17_COMMENTING_GUIDE.md` for learning-focused comments.
+1. Read `README.md` and `docs/23_MASTER_BLUEPRINT.md`.
+2. Read `docs/25_PHASE_CONTEXT_RESUME.md` for the latest evidence and exact resume point.
+3. Work in the order defined by `docs/16_IMPLEMENTATION_PHASES.md`.
+4. Use `docs/24_TEST_ACCEPTANCE_MATRIX.md` and `docs/18_DEFINITION_OF_DONE.md` as gates.
+5. Follow `docs/17_COMMENTING_GUIDE.md` for learning-focused comments.
 
 ## Architecture rules
 
@@ -42,7 +46,17 @@ docker compose -f deploy/docker-compose.yml config --quiet
 
 Add frontend and integration commands to this file when those components are implemented.
 
+```powershell
+Push-Location frontend
+npm ci
+npm run lint
+npm test
+npm run build
+npm run e2e
+Pop-Location
+./scripts/smoke-test.ps1
+```
+
 ## Stop point
 
 Complete and verify through Phase 10, then report results. Do not create paid cloud resources, configure a custom domain, or deploy to Render until the user explicitly approves Phase 11.
-

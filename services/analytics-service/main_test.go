@@ -5,6 +5,7 @@ import (
 	analyticsv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/analytics/v1"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -35,6 +36,17 @@ func TestAnalyticsMapsRowsIntoSummary(t *testing.T) {
 	out, err := s.Summary(context.Background(), &analyticsv1.SummaryRequest{})
 	if err != nil || out.TotalEvents != 6 || out.Created != 3 || out.Updated != 2 || out.Deleted != 1 {
 		t.Fatalf("unexpected summary %#v %v", out, err)
+	}
+}
+
+func TestAnalyticsQueriesUseClickHouseFinalForImmediateDeduplication(t *testing.T) {
+	f := &fakeStore{rows: [][]string{{"task.created", "1"}}}
+	s := &analyticsServer{store: f}
+	if _, err := s.Summary(context.Background(), &analyticsv1.SummaryRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.query, "task_events FINAL") {
+		t.Fatalf("summary must use FINAL, query=%s", f.query)
 	}
 }
 func TestAnalyticsMapsRowsIntoTimeseriesAndStatuses(t *testing.T) {

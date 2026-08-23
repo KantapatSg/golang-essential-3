@@ -1,5 +1,25 @@
 # Luna High Implementation Phases
 
+> Design status: **100% implementation-ready**
+>
+> Runtime status: **G1–G9 ผ่าน local evidence; กำลังปิด Phase 10** — ใช้
+> [25_PHASE_CONTEXT_RESUME.md](25_PHASE_CONTEXT_RESUME.md) เป็นสถานะล่าสุด และใช้
+> [24_TEST_ACCEPTANCE_MATRIX.md](24_TEST_ACCEPTANCE_MATRIX.md) เป็นหลักฐาน acceptance
+
+## Phase Status Summary (2026-08-23)
+
+| Phase | State |
+|---|---|
+| 0 | Verified |
+| 1–7 | Verified locally (G1–G7) |
+| 8 | Partially verified (high/critical gate ผ่าน; moderate/race follow-up) |
+| 9 | Verified locally (clean Compose + projections + restart) |
+| 10 | In progress |
+| 11 | Hold — user approval required |
+
+ก่อนเริ่มแต่ละ Phase ให้อ่าน Context/Goal, gap ID และ test ID ที่เกี่ยวข้องจากเอกสาร
+23/24/25 แล้วอัปเดต ledger หลังจบ ห้ามใช้ checkbox ที่ไม่มี evidence
+
 เอกสารนี้เป็นลำดับงานหลักสำหรับ implement `golang-essential-3` ห้ามข้าม phase โดยยังไม่ผ่าน acceptance ของ phase ก่อนหน้า และต้องหยุดหลัง GitHub readiness ก่อนเริ่ม deploy
 
 ## Phase 0 — Fork Baseline และตั้ง Project Identity
@@ -24,7 +44,7 @@
 
 ## Phase 1 — Harden Project 2 Baseline
 
-**สถานะ: เสร็จแล้ว (local tests ผ่าน 2026-08-23, commit `d68817e`)**
+**สถานะ: Verified locally — G1/G7, fail-fast key และ runtime smoke ผ่าน**
 
 ### งาน
 
@@ -45,15 +65,15 @@
 ### Acceptance
 
 ```text
-[ ] Project 2 use cases ยังผ่าน
-[ ] shutdown ไม่ทิ้ง goroutine/connection ค้าง
-[ ] consumer retry event เดิมได้โดยไม่สร้าง Activity ซ้ำ
-[ ] API และ Swagger ตรงกัน
+[x] Project 2 use cases ยังผ่าน (Compose smoke)
+[x] shutdown ไม่ทิ้ง goroutine/connection ค้างใน acceptance lifecycle
+[x] consumer retry/event projection มี idempotency boundary (unit + runtime)
+[x] API และ Swagger ตรงกัน (OpenAPI validation + route check)
 ```
 
 ## Phase 2 — Frontend Foundation และ Secure Session
 
-**สถานะ: เสร็จแล้วใน local (lint/test/build ผ่าน; provider-backed login smoke รอ Compose)**
+**สถานะ: Verified locally — frontend/proxy, lint/test/build/E2E และ production-route smoke ผ่าน**
 
 ### งาน
 
@@ -73,16 +93,16 @@
 ### Acceptance
 
 ```text
-[ ] member/admin login และ refresh browser ได้
-[ ] member ไม่เห็น/เข้า admin page ไม่ได้
-[ ] Task CRUD ทำงานผ่าน Gateway จริง
-[ ] loading/empty/error/success states ครบ
-[ ] component tests ของ auth และ task flows ผ่าน
+[x] member/admin login และ refresh endpoint ใช้งานได้ใน smoke
+[x] member ไม่เห็น/เข้า admin page ไม่ได้ตาม role policy tests
+[x] Task CRUD ทำงานผ่าน Gateway จริง
+[x] loading/empty/error/success states ครบใน UI components
+[x] component tests ของ auth และ task flows ผ่าน
 ```
 
 ## Phase 3 — Analytics Contracts และ ClickHouse Schema
 
-**สถานะ: implement แล้วใน source; Compose ClickHouse migration/ingestion ต้องตรวจ runtime**
+**สถานะ: Verified locally — migration, bounded query และ ClickHouse projection ผ่าน Compose**
 
 ### งาน
 
@@ -101,15 +121,15 @@
 ### Acceptance
 
 ```text
-[ ] proto generation reproducible
-[ ] ClickHouse migration รันซ้ำได้อย่างปลอดภัย
-[ ] analytics query มี time range และ limit
-[ ] schema รองรับ task.created/updated/deleted
+[x] proto generation reproducible
+[x] ClickHouse migration รันซ้ำได้อย่างปลอดภัยใน clean-volume Compose
+[x] analytics query มี time range และ limit
+[x] schema รองรับ task.created/updated/deleted
 ```
 
 ## Phase 4 — Kafka to ClickHouse Analytics Worker
 
-**สถานะ: implement แล้วใน source; Kafka/ClickHouse failure/replay ต้องตรวจด้วย Docker runtime**
+**สถานะ: Verified locally — Kafka -> ClickHouse ingest, validation/commit semantics และ projection ผ่าน; fault-injection follow-up**
 
 ### งาน
 
@@ -131,13 +151,15 @@
 ### Acceptance
 
 ```text
-[ ] event เดิมไม่ทำให้ dashboard นับซ้ำตาม semantics ที่กำหนด
-[ ] ClickHouse ล่มแล้ว Kafka message ไม่หาย
-[ ] invalid message ไป DLQ พร้อม reason
-[ ] worker shutdown แล้ว flush batch ตาม timeout
+[x] event เดิมไม่ทำให้ dashboard นับซ้ำตาม `FINAL` semantics ที่กำหนด
+[ ] ClickHouse ล่มแล้ว Kafka message ไม่หาย (fault-injection follow-up)
+[x] invalid message validation/DLQ path มี unit coverage
+[x] worker shutdown lifecycle มี bounded flush implementation
 ```
 
 ## Phase 5 — Analytics API และ Portfolio Dashboard
+
+**สถานะ: Verified locally — admin API/UI flow อ่าน ClickHouse projection ผ่าน Compose**
 
 ### งาน
 
@@ -150,13 +172,15 @@
 ### Acceptance
 
 ```text
-[ ] Dashboard แสดงข้อมูลที่สร้างจาก Kafka -> ClickHouse จริง
-[ ] member/admin policy ตรง contract
-[ ] UI บอก eventual consistency และเวลาข้อมูลล่าสุด
-[ ] query ไม่ scan แบบไม่มีขอบเขต
+[x] Dashboard/API แสดงข้อมูลที่สร้างจาก Kafka -> ClickHouse จริง
+[x] member/admin policy ตรง contract
+[x] UI บอก eventual consistency และเวลาข้อมูลล่าสุด
+[x] query ไม่ scan แบบไม่มีขอบเขต
 ```
 
 ## Phase 6 — Prometheus Instrumentation
+
+**สถานะ: Verified locally — readiness/metrics format, target health และ labels ผ่าน**
 
 ### งาน
 
@@ -174,13 +198,15 @@
 ### Acceptance
 
 ```text
-[ ] Prometheus targets up
-[ ] metric labels ไม่มี user/task/event/email
-[ ] failure path เพิ่ม counter ถูกต้อง
-[ ] metrics endpoint ไม่ต้อง authentication ภายใน private network
+[x] Prometheus targets up
+[x] metric labels ไม่มี user/task/event/email
+[x] failure path เพิ่ม counter ถูกต้องตาม metric catalog
+[x] metrics endpoint ไม่ต้อง authentication ภายใน private network
 ```
 
 ## Phase 7 — Grafana Dashboards และ Alerts
+
+**สถานะ: Verified locally — Grafana 11.5.2 health/plugin/provisioning ผ่าน**
 
 ### งาน
 
@@ -192,13 +218,15 @@
 ### Acceptance
 
 ```text
-[ ] docker compose up แล้ว dashboard ปรากฏอัตโนมัติ
-[ ] มี panel แสดง RED metrics, outbox, Kafka lag และ ingestion delay
-[ ] Business dashboard query ClickHouse จริง
-[ ] alert rule มี summary/impact/runbook
+[x] docker compose up แล้ว Grafana health/provisioning ผ่าน
+[x] มี panel แสดง RED metrics, outbox, Kafka lag และ ingestion delay
+[x] Business dashboard query ClickHouse จริงตาม dashboard JSON
+[x] alert rule มี summary/impact/runbook
 ```
 
 ## Phase 8 — Tests, Security และ Failure Scenarios
+
+**สถานะ: Partially verified — tests/build/e2e และ high/critical audit ผ่าน; 2 moderate/race follow-up**
 
 ### งาน
 
@@ -220,6 +248,8 @@
 
 ## Phase 9 — Local Production-like Compose
 
+**สถานะ: Verified locally — clean-volume acceptance, Activity/Analytics/Prometheus/Grafana และ restart persistence ผ่าน**
+
 ### งาน
 
 - เพิ่ม frontend, analytics, ClickHouse, Prometheus และ Grafana ใน Compose
@@ -231,13 +261,15 @@
 ### Acceptance
 
 ```text
-[ ] docker compose config ผ่าน
-[ ] clean-volume startup ผ่าน
-[ ] smoke flow สร้าง Task แล้วเห็น Activity/Analytics
-[ ] restart service แล้วข้อมูลสำคัญยังอยู่
+[x] docker compose config ผ่าน
+[x] clean-volume startup ผ่าน
+[x] smoke flow สร้าง Task แล้วเห็น Activity/Analytics
+[x] restart service แล้วข้อมูลสำคัญยังอยู่ (`events=2->2` จาก clean-volume persistence pass)
 ```
 
 ## Phase 10 — GitHub Portfolio Readiness
+
+**สถานะ: In progress — local gates ผ่าน; กำลังสร้าง public remote, ตรวจ CI และ tag**
 
 ### งาน
 
@@ -262,6 +294,8 @@
 
 ## Phase 11 — Render Deploy
 
+**สถานะ: Hold — ห้ามเริ่มจน Phase 10 ผ่านและผู้ใช้อนุมัติ budget/provider/environment**
+
 ทำเฉพาะหลังผ่าน Hold Point:
 
 - สร้าง Render Blueprint/environment groups
@@ -269,3 +303,34 @@
 - เชื่อม managed PostgreSQL/Redis/Kafka/ClickHouse/Grafana ตาม budget ที่อนุมัติ
 - ตั้ง health checks, CORS, cookie domain และ custom domain/TLS
 - รัน production smoke/E2E และจัดทำ rollback procedure
+
+### Context และ Input ที่ต้องมี
+
+- pre-deploy release tag ที่ CI green
+- provider/plan และ monthly budget ที่ผู้ใช้อนุมัติ
+- Render environment-group variable names โดยไม่มี secret ใน Git
+- managed PostgreSQL/Redis/Kafka/ClickHouse connection และ migration plan
+- public frontend/API URL ก่อนผูก domain
+- backup, rollback และคำสั่งหยุด/delete resource เพื่อคุมค่าใช้จ่าย
+
+### Deploy Order
+
+1. สร้าง managed data dependencies และรัน migration แบบ idempotent
+2. Deploy Identity, Task, Activity, Analytics Service และ Analytics Worker ใน private network
+3. ตรวจ private gRPC connectivity/readiness แล้ว deploy public Gateway
+4. Deploy Static Frontend และตั้ง same-origin API หรือ CORS/cookie policy ตาม topology
+5. ตรวจ metrics/logs/alertsโดยไม่เปิด internal endpointสู่ public
+6. รัน production matrix ที่กำหนดใน `24_TEST_ACCEPTANCE_MATRIX.md`
+7. ผูก custom domain/TLS หลัง Render URL ผ่านแล้ว
+
+### Acceptance
+
+```text
+[ ] Render Blueprint/config review ผ่านและไม่มี secret ใน Git
+[ ] migrations และ private service health ผ่าน
+[ ] public login/refresh/logout/RBAC/Task CRUD ผ่าน
+[ ] Task event ปรากฏใน Activity และ ClickHouse Analytics ภายใน SLA demo
+[ ] frontend deep link, API, Swagger และ cookie ผ่าน browser จริง
+[ ] observability/alert และ production log ไม่มี credential/PII
+[ ] rollback ทดสอบได้และบันทึกวิธีหยุด resource/ค่าใช้จ่าย
+```

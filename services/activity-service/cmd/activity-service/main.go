@@ -31,6 +31,7 @@ var migrationSQL string
 //go:embed migrations/002_indexes.sql
 var migration2SQL string
 var activityProcessed, activityFailed, activityDuplicate atomic.Uint64
+var activityLag atomic.Int64
 
 type activity struct {
 	ID, EventID, EventType, TaskID, ActorID string
@@ -189,6 +190,7 @@ func (s *activityServer) consume(ctx context.Context, brokers string) {
 			}
 			return
 		}
+		activityLag.Store(int64(r.Stats().Lag))
 		var p eventPayload
 		if json.Unmarshal(m.Value, &p) != nil || p.SchemaVersion > 1 || p.EventID == "" || p.EventType == "" || p.Task.ID == "" {
 			activityFailed.Add(1)
@@ -247,7 +249,26 @@ func main() {
 		log.Fatal(e)
 	}
 	s := &activityServer{seen: map[string]struct{}{}, db: db}
-	startHealthServer(ctx, env("ACTIVITY_HTTP_ADDR", ":9103"))
+	brokers := strings.TrimSpace(os.Getenv("KAFKA_BROKERS"))
+	startHealthServer(ctx, env("ACTIVITY_HTTP_ADDR", ":9103"), func(checkCtx context.Context) error {
+		if db != nil {
+			sqlDB, err := db.DB()
+			if err != nil {
+				return err
+			}
+			if err = sqlDB.PingContext(checkCtx); err != nil {
+				return err
+			}
+		}
+		if brokers == "" {
+			return nil
+		}
+		conn, err := (&kafka.Dialer{Timeout: 500 * time.Millisecond}).DialContext(checkCtx, "tcp", strings.TrimSpace(strings.Split(brokers, ",")[0]))
+		if err != nil {
+			return err
+		}
+		return conn.Close()
+	})
 	// Kafka consumer ทำงานเป็น background goroutine และรับ context เดียวกับ service lifecycle
 	go s.consume(ctx, os.Getenv("KAFKA_BROKERS"))
 	g := grpc.NewServer()
@@ -263,18 +284,25 @@ func main() {
 		}
 	}
 }
-func startHealthServer(ctx context.Context, addr string) {
+func startHealthServer(ctx context.Context, addr string, ready func(context.Context) error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health/live", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 	mux.HandleFunc("/health/ready", func(w http.ResponseWriter, _ *http.Request) {
+		checkCtx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+		defer cancel()
+		if err := ready(checkCtx); err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"status":"not_ready"}`))
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ready"}`))
 	})
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = fmt.Fprintf(w, "service_ready 1\nkafka_consumer_messages_total{consumer=\"activity\"} %d\nkafka_consumer_failures_total{consumer=\"activity\"} %d\n", activityProcessed.Load(), activityFailed.Load())
+		_, _ = fmt.Fprintf(w, "# HELP service_ready Whether the activity service can accept traffic.\n# TYPE service_ready gauge\nservice_ready 1\n# HELP kafka_consumer_messages_total Activity events processed.\n# TYPE kafka_consumer_messages_total counter\nkafka_consumer_messages_total{consumer=\"activity\"} %d\n# HELP kafka_consumer_failures_total Activity event failures.\n# TYPE kafka_consumer_failures_total counter\nkafka_consumer_failures_total{consumer=\"activity\"} %d\n# HELP kafka_consumer_lag Messages behind the end of the Kafka partition.\n# TYPE kafka_consumer_lag gauge\nkafka_consumer_lag{consumer=\"activity\"} %d\n", activityProcessed.Load(), activityFailed.Load(), activityLag.Load())
 	})
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() {

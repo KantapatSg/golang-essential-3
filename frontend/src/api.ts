@@ -1,6 +1,9 @@
 import type { Activity, AnalyticsSummary, StatusCount, Task, TimeseriesPoint, TokenResponse } from './types'
 
 let accessToken: string | null = null
+// ใช้ relative URL ใน local Compose เพื่อให้ Nginx ทำ same-origin proxy และใช้
+// VITE_API_BASE_URL ใน Render Static Site ที่อยู่คนละ origin กับ Gateway
+const apiBaseURL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
 export const setAccessToken = (token: string | null) => { accessToken = token }
 export const getAccessToken = () => accessToken
 
@@ -8,7 +11,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
   headers.set('Content-Type', 'application/json')
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
-  const response = await fetch(path, { ...init, headers, credentials: 'include' })
+  const response = await fetch(`${apiBaseURL}${path}`, { ...init, headers, credentials: 'include' })
   if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.error || `Request failed (${response.status})`) }
   if (response.status === 204) return undefined as T
   return response.json() as Promise<T>

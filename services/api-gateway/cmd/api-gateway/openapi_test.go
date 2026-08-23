@@ -9,10 +9,16 @@ import (
 )
 
 func TestOpenAPIContainsPublicPaths(t *testing.T) {
-	for _, p := range []string{"/healthz", "/api/v1/auth/login", "/api/v1/tasks"} {
+	for _, p := range []string{"/healthz", "/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/auth/logout", "/api/v1/tasks", "/api/v1/activities", "/api/v1/analytics/summary", "/api/v1/analytics/timeseries", "/api/v1/analytics/statuses"} {
 		if !strings.Contains(openAPI, p) {
 			t.Fatalf("openapi missing %s", p)
 		}
+	}
+}
+
+func TestSwaggerPageLoadsSwaggerUIBundle(t *testing.T) {
+	if !strings.Contains(swaggerUIHTML, "SwaggerUIBundle") || !strings.Contains(swaggerUIHTML, "'/openapi.yaml'") {
+		t.Fatal("swagger page must initialize Swagger UI against the embedded OpenAPI contract")
 	}
 }
 
