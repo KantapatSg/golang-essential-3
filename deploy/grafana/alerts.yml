@@ -16,3 +16,13 @@ groups:
         for: 5m
         labels: { severity: warning }
         annotations: { summary: "Kafka consumer lag is high", impact: "Activity or analytics projections are stale", runbook: "docs/21_OBSERVABILITY_RUNBOOK.md#analytics-delay" }
+      - alert: OrderServiceDown
+        expr: up{service="order"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations: { summary: "Order service is down", impact: "Order reads and writes may fail" }
+      - alert: OrderProjectionStalled
+        expr: max(kafka_consumer_lag{consumer=~"activity|analytics|notification"}) > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "Order projection backlog is stalled", impact: "Activity, notifications, or analytics may be stale" }

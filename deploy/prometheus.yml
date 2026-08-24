@@ -15,3 +15,11 @@ scrape_configs:
     static_configs: [{ targets: ['analytics-service:9104'], labels: { service: analytics } }]
   - job_name: analytics-worker
     static_configs: [{ targets: ['analytics-worker:9105'], labels: { service: analytics_worker } }]
+  - job_name: inventory
+    static_configs: [{ targets: ['inventory-service:9106'], labels: { service: inventory } }]
+  - job_name: order
+    static_configs: [{ targets: ['order-service:9107'], labels: { service: order } }]
+  - job_name: payment
+    static_configs: [{ targets: ['payment-service:9108'], labels: { service: payment } }]
+  - job_name: notification
+    static_configs: [{ targets: ['notification-service:9109'], labels: { service: notification } }]
