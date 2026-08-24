@@ -66,3 +66,31 @@ reconcile only events produced by that run; volumes remain intact.
 
 **Next phase:** P1 canonical terminal events and compensation state.
 
+## P1 — Canonical terminal events and compensation
+
+**Status:** **Passed — focused contract/state/service tests**.
+
+Implemented on the working branch (without touching the preserved design inputs):
+
+- Added one shared set of Order/Inventory event-name constants.
+- Added `CANCELLING` and the explicit `PaymentFailed -> CANCELLING -> InventoryReleased ->
+  CANCELLED` transition. Payment success emits `OrderConfirmed`; out-of-stock emits
+  `OrderRejected`; confirmed orders emit `InventoryConsumed`.
+- Order consumers now use `FetchMessage` and commit only after the state side effect and publish
+  succeed. PostgreSQL mode records the processed event and terminal outbox row in the same
+  transaction with a row lock; memory mode retains event-id idempotency for focused tests.
+- Inventory handles `OrderConfirmed` consumption idempotently and emits `InventoryConsumed`.
+- Activity already records the complete envelope; persisted Notification message mapping now
+  covers release, rejection, cancellation, and consumption milestones.
+- Added additive `order_processed_events` migration; no existing table/topic/data/volume was
+  removed.
+
+**Focused verification:**
+
+```text
+go test ./contracts ./services/order-service/... ./services/inventory-service/...   # passed
+go test ./services/notification-service/... ./services/activity-service/...         # passed
+```
+
+P1 does not claim historical V1 terminal events: existing ClickHouse rows remain unchanged and
+canonical terminal events are produced only from newly processed live outcomes.

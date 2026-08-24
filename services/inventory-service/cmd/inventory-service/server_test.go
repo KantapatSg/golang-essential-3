@@ -43,3 +43,26 @@ func TestQuoteRejectsUnknownProduct(t *testing.T) {
 		t.Fatalf("code=%v", status.Code(err))
 	}
 }
+
+func TestConfirmedConsumesReservationIdempotently(t *testing.T) {
+	s := &inventoryServer{products: map[string]product{"p": {"p", "P", "USD", 10, 1}}, reservations: map[string]reservation{}, processed: map[string]bool{}}
+	b, _ := json.Marshal(map[string]interface{}{"order": map[string]interface{}{"id": "o1", "customer_id": "u1", "items": []map[string]interface{}{{"product_id": "p", "quantity": 1}}}})
+	created := contracts.Envelope{SchemaVersion: 1, EventID: "created", EventType: contracts.EventOrderCreated, CorrelationID: "o1", OrderID: "o1", CustomerID: "u1", OccurredAt: time.Now().UTC(), Payload: b}
+	if _, err := s.reserve(created); err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(compensationPayload{OrderID: "o1", CustomerID: "u1"})
+	confirmed := contracts.Envelope{SchemaVersion: 1, EventID: "confirmed", EventType: contracts.EventOrderConfirmed, CorrelationID: "o1", OrderID: "o1", CustomerID: "u1", OccurredAt: time.Now().UTC(), Payload: payload}
+	out, err := s.consumeReservation(confirmed)
+	if err != nil || out.EventType != contracts.EventInventoryConsumed {
+		t.Fatalf("out=%v err=%v", out, err)
+	}
+	for _, r := range s.reservations {
+		if r.Status != "CONSUMED" {
+			t.Fatalf("reservation=%+v", r)
+		}
+	}
+	if duplicate, err := s.consumeReservation(confirmed); err != nil || duplicate.EventID != "" {
+		t.Fatalf("duplicate=%v err=%v", duplicate, err)
+	}
+}

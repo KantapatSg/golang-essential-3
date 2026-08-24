@@ -18,3 +18,6 @@ CREATE TABLE IF NOT EXISTS order_idempotency (
   key text PRIMARY KEY, customer_id uuid NOT NULL, request_hash text NOT NULL,
   order_id uuid NOT NULL REFERENCES orders(id), created_at timestamptz NOT NULL
 );
+CREATE TABLE IF NOT EXISTS order_processed_events (
+  event_id uuid PRIMARY KEY, event_type text NOT NULL, processed_at timestamptz NOT NULL
+);

@@ -9,6 +9,20 @@ import (
 
 const OrderEventsTopic = "order.events.v1"
 
+const (
+	EventOrderCreated              = "OrderCreated"
+	EventInventoryReserved         = "InventoryReserved"
+	EventInventoryRejected         = "InventoryRejected"
+	EventPaymentCompleted          = "PaymentCompleted"
+	EventPaymentFailed             = "PaymentFailed"
+	EventInventoryReleaseRequested = "InventoryReleaseRequested"
+	EventInventoryReleased         = "InventoryReleased"
+	EventOrderConfirmed            = "OrderConfirmed"
+	EventOrderRejected             = "OrderRejected"
+	EventOrderCancelled            = "OrderCancelled"
+	EventInventoryConsumed         = "InventoryConsumed"
+)
+
 // Envelope เป็น boundary เดียวของ event เพื่อให้ทุก consumer ตรวจ identity/correlation
 // ก่อนทำ side effect และรองรับการ retry แบบ at-least-once ได้อย่างปลอดภัย
 type Envelope struct {

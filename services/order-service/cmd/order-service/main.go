@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc/status"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type orderRow struct {
@@ -65,11 +66,17 @@ type idemRow struct {
 	OrderID     string
 	CreatedAt   time.Time
 }
+type processedEventRow struct {
+	EventID     string `gorm:"type:uuid;primaryKey"`
+	EventType   string
+	ProcessedAt time.Time
+}
 
-func (orderRow) TableName() string  { return "orders" }
-func (itemRow) TableName() string   { return "order_items" }
-func (outboxRow) TableName() string { return "order_outbox" }
-func (idemRow) TableName() string   { return "order_idempotency" }
+func (orderRow) TableName() string          { return "orders" }
+func (itemRow) TableName() string           { return "order_items" }
+func (outboxRow) TableName() string         { return "order_outbox" }
+func (idemRow) TableName() string           { return "order_idempotency" }
+func (processedEventRow) TableName() string { return "order_processed_events" }
 
 type eventPayload struct {
 	Order orderPayload `json:"order"`
@@ -95,6 +102,7 @@ type orderServer struct {
 	mu          sync.RWMutex
 	orders      map[string]*orderRow
 	idempotency map[string]idem
+	processed   map[string]bool
 	inventory   inventoryv1.InventoryServiceClient
 	db          *gorm.DB
 }
@@ -343,43 +351,89 @@ func (s *orderServer) applyOutcome(ctx context.Context, e contracts.Envelope) (c
 	if p.OrderID == "" {
 		p.OrderID = e.OrderID
 	}
+	if p.CustomerID == "" {
+		p.CustomerID = e.CustomerID
+	}
+	out := canonicalOutcome(e, p)
 	if s.db != nil {
-		var row orderRow
-		if err := s.db.WithContext(ctx).First(&row, "id = ?", p.OrderID).Error; err != nil {
-			return contracts.Envelope{}, err
-		}
-		next, err := state.Transition(row.Status, e.EventType)
-		if err != nil || (next == row.Status && e.EventType != "PaymentFailed") {
-			return contracts.Envelope{}, err
-		}
-		if next != row.Status {
-			if err := s.db.WithContext(ctx).Model(&orderRow{}).Where("id = ?", p.OrderID).Updates(map[string]interface{}{"status": next, "reason": p.Reason, "updated_at": time.Now().UTC()}).Error; err != nil {
-				return contracts.Envelope{}, err
+		err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			var seen processedEventRow
+			if err := tx.First(&seen, "event_id = ?", e.EventID).Error; err == nil {
+				return nil
+			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
 			}
+			var row orderRow
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, "id = ?", p.OrderID).Error; err != nil {
+				return err
+			}
+			next, err := state.Transition(row.Status, e.EventType)
+			if err != nil {
+				return err
+			}
+			if next != row.Status {
+				if err := tx.Model(&orderRow{}).Where("id = ?", p.OrderID).Updates(map[string]interface{}{"status": next, "reason": p.Reason, "updated_at": time.Now().UTC()}).Error; err != nil {
+					return err
+				}
+			}
+			if err := tx.Create(&processedEventRow{EventID: e.EventID, EventType: e.EventType, ProcessedAt: time.Now().UTC()}).Error; err != nil {
+				return err
+			}
+			if out.EventID != "" {
+				b, _ := json.Marshal(out)
+				if err := tx.Create(&outboxRow{EventID: out.EventID, EventType: out.EventType, AggregateID: p.OrderID, Payload: string(b), OccurredAt: out.OccurredAt}).Error; err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return contracts.Envelope{}, err
 		}
 	} else {
 		s.mu.Lock()
+		if s.processed == nil {
+			s.processed = map[string]bool{}
+		}
+		if s.processed[e.EventID] {
+			s.mu.Unlock()
+			return contracts.Envelope{}, nil
+		}
 		row := s.orders[p.OrderID]
 		if row == nil {
 			s.mu.Unlock()
 			return contracts.Envelope{}, nil
 		}
 		next, err := state.Transition(row.Status, e.EventType)
-		if err != nil || (next == row.Status && e.EventType != "PaymentFailed") {
+		if err != nil {
 			s.mu.Unlock()
 			return contracts.Envelope{}, err
 		}
 		if next != row.Status {
 			row.Status, row.Reason, row.UpdatedAt = next, p.Reason, time.Now().UTC()
 		}
+		s.processed[e.EventID] = true
 		s.mu.Unlock()
 	}
-	if e.EventType == "PaymentFailed" {
-		// Payment decline เป็น terminal state; คำสั่ง release เป็น compensation ที่ส่งซ้ำได้
-		payload, _ := json.Marshal(outcomePayload{OrderID: p.OrderID, CustomerID: p.CustomerID, Reason: p.Reason})
-		return contracts.Envelope{SchemaVersion: 1, EventID: uuid.NewString(), EventType: "InventoryReleaseRequested", CorrelationID: e.CorrelationID, CausationID: e.EventID, OccurredAt: time.Now().UTC(), CustomerID: p.CustomerID, OrderID: p.OrderID, Payload: payload}, nil
+	return out, nil
+}
+func canonicalOutcome(e contracts.Envelope, p outcomePayload) contracts.Envelope {
+	eventType := ""
+	switch e.EventType {
+	case contracts.EventInventoryRejected:
+		eventType = contracts.EventOrderRejected
+	case contracts.EventPaymentCompleted:
+		eventType = contracts.EventOrderConfirmed
+	case contracts.EventPaymentFailed:
+		eventType = contracts.EventInventoryReleaseRequested
+	case contracts.EventInventoryReleased:
+		eventType = contracts.EventOrderCancelled
 	}
-	return contracts.Envelope{}, nil
+	if eventType == "" {
+		return contracts.Envelope{}
+	}
+	payload, _ := json.Marshal(p)
+	return contracts.Envelope{SchemaVersion: 1, EventID: uuid.NewString(), EventType: eventType, CorrelationID: e.CorrelationID, CausationID: e.EventID, OccurredAt: time.Now().UTC(), CustomerID: p.CustomerID, OrderID: p.OrderID, Payload: payload}
 }
 func (s *orderServer) consumeOutcomes(ctx context.Context, brokers string) {
 	if brokers == "" {
@@ -389,9 +443,8 @@ func (s *orderServer) consumeOutcomes(ctx context.Context, brokers string) {
 	defer reader.Close()
 	writer := &kafka.Writer{Addr: kafka.TCP(strings.Split(brokers, ",")...), Topic: contracts.OrderEventsTopic}
 	defer writer.Close()
-	processed := map[string]bool{}
 	for {
-		m, err := reader.ReadMessage(ctx)
+		m, err := reader.FetchMessage(ctx)
 		if err != nil {
 			return
 		}
@@ -399,24 +452,24 @@ func (s *orderServer) consumeOutcomes(ctx context.Context, brokers string) {
 		if json.Unmarshal(m.Value, &e) != nil || e.Validate() != nil {
 			continue
 		}
-		if e.EventType != "InventoryReserved" && e.EventType != "InventoryRejected" && e.EventType != "PaymentCompleted" && e.EventType != "PaymentFailed" {
-			continue
-		}
-		if processed[e.EventID] {
+		if e.EventType != contracts.EventInventoryReserved && e.EventType != contracts.EventInventoryRejected && e.EventType != contracts.EventPaymentCompleted && e.EventType != contracts.EventPaymentFailed && e.EventType != contracts.EventInventoryReleased {
 			continue
 		}
 		out, err := s.applyOutcome(ctx, e)
 		if err != nil {
 			continue
 		}
-		if out.EventID != "" {
+		if out.EventID != "" && s.db == nil {
 			b, _ := json.Marshal(out)
 			if err := writer.WriteMessages(ctx, kafka.Message{Key: []byte(out.EventID), Value: b}); err != nil {
 				log.Printf("release publish retry event=%s: %v", out.EventID, err)
 				continue
 			}
 		}
-		processed[e.EventID] = true
+		// Commit หลัง side effect สำเร็จ เพื่อให้ retry ใช้ processed_events/outbox กันซ้ำได้
+		if err := reader.CommitMessages(ctx, m); err != nil {
+			log.Printf("order event commit retry event=%s: %v", e.EventID, err)
+		}
 	}
 }
 func openDB(ctx context.Context, dsn string) (*gorm.DB, error) {
@@ -463,14 +516,14 @@ func health(ctx context.Context, addr string, db *gorm.DB) {
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s := &orderServer{orders: map[string]*orderRow{}, idempotency: map[string]idem{}}
+	s := &orderServer{orders: map[string]*orderRow{}, idempotency: map[string]idem{}, processed: map[string]bool{}}
 	if dsn := os.Getenv("ORDER_DB_DSN"); dsn != "" {
 		db, e := openDB(ctx, dsn)
 		if e != nil {
 			log.Fatal(e)
 		}
 		s.db = db
-		if e = db.AutoMigrate(&orderRow{}, &itemRow{}, &outboxRow{}, &idemRow{}); e != nil {
+		if e = db.AutoMigrate(&orderRow{}, &itemRow{}, &outboxRow{}, &idemRow{}, &processedEventRow{}); e != nil {
 			log.Fatal(e)
 		}
 	}

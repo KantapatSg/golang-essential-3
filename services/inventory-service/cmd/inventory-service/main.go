@@ -169,6 +169,25 @@ func (s *inventoryServer) release(e contracts.Envelope) (contracts.Envelope, err
 	s.processed[e.EventID] = true
 	return s.outcome(e, p.CustomerID, "InventoryReleased", "", 0, "", ""), nil
 }
+func (s *inventoryServer) consumeReservation(e contracts.Envelope) (contracts.Envelope, error) {
+	var p compensationPayload
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return contracts.Envelope{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.processed[e.EventID] {
+		return contracts.Envelope{}, nil
+	}
+	for id, r := range s.reservations {
+		if r.OrderID == p.OrderID && r.Status == "RESERVED" {
+			r.Status = "CONSUMED"
+			s.reservations[id] = r
+		}
+	}
+	s.processed[e.EventID] = true
+	return s.outcome(e, p.CustomerID, contracts.EventInventoryConsumed, "", 0, p.Currency, ""), nil
+}
 func (s *inventoryServer) outcome(e contracts.Envelope, customer, eventType, reason string, amount int64, currency, scenario string) contracts.Envelope {
 	b, _ := json.Marshal(compensationPayload{OrderID: e.OrderID, CustomerID: customer, Reason: reason, AmountMinor: amount, Currency: currency, PaymentScenario: scenario})
 	return contracts.Envelope{SchemaVersion: 1, EventID: uuid.NewString(), EventType: eventType, CorrelationID: e.CorrelationID, CausationID: e.EventID, OccurredAt: time.Now().UTC(), CustomerID: customer, OrderID: e.OrderID, Payload: b}
@@ -182,7 +201,7 @@ func (s *inventoryServer) consume(ctx context.Context, brokers string) {
 	writer := &kafka.Writer{Addr: kafka.TCP(strings.Split(brokers, ",")...), Topic: contracts.OrderEventsTopic}
 	defer writer.Close()
 	for {
-		m, err := reader.ReadMessage(ctx)
+		m, err := reader.FetchMessage(ctx)
 		if err != nil {
 			return
 		}
@@ -191,14 +210,25 @@ func (s *inventoryServer) consume(ctx context.Context, brokers string) {
 			continue
 		}
 		var out contracts.Envelope
-		if e.EventType == "OrderCreated" {
+		if e.EventType == contracts.EventOrderCreated {
 			out, err = s.reserve(e)
-		} else if e.EventType == "InventoryReleaseRequested" {
+		} else if e.EventType == contracts.EventInventoryReleaseRequested {
 			out, err = s.release(e)
+		} else if e.EventType == contracts.EventOrderConfirmed {
+			out, err = s.consumeReservation(e)
 		}
-		if err == nil && out.EventID != "" {
+		if err != nil {
+			continue
+		}
+		if out.EventID != "" {
 			b, _ := json.Marshal(out)
-			_ = writer.WriteMessages(ctx, kafka.Message{Key: []byte(out.EventID), Value: b})
+			if err := writer.WriteMessages(ctx, kafka.Message{Key: []byte(out.EventID), Value: b}); err != nil {
+				continue
+			}
+		}
+		// commit หลัง reservation/release/consume และ publish สำเร็จ เพื่อให้ retry ปลอดภัย
+		if err := reader.CommitMessages(ctx, m); err != nil {
+			log.Printf("inventory event commit retry event=%s: %v", e.EventID, err)
 		}
 	}
 }

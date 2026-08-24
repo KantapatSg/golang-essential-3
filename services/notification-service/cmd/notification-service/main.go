@@ -191,10 +191,18 @@ func messageFor(event string) (string, string) {
 		return "PAYMENT_COMPLETED", "Payment completed"
 	case "PaymentFailed":
 		return "PAYMENT_FAILED", "Payment declined; stock will be released"
+	case "InventoryReleaseRequested":
+		return "INVENTORY_RELEASE_REQUESTED", "Stock release was requested"
+	case "InventoryReleased":
+		return "INVENTORY_RELEASED", "Reserved stock was released"
 	case "OrderConfirmed":
 		return "ORDER_CONFIRMED", "Your order is confirmed"
+	case "OrderRejected":
+		return "ORDER_REJECTED", "Your order was rejected because stock is unavailable"
 	case "OrderCancelled":
 		return "ORDER_CANCELLED", "Your order was cancelled"
+	case "InventoryConsumed":
+		return "INVENTORY_CONSUMED", "Reserved stock was consumed"
 	}
 	return "", ""
 }

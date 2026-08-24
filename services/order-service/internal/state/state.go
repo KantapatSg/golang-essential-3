@@ -5,6 +5,7 @@ import "errors"
 const (
 	Pending       = "PENDING"
 	StockReserved = "STOCK_RESERVED"
+	Cancelling    = "CANCELLING"
 	Confirmed     = "CONFIRMED"
 	Rejected      = "REJECTED"
 	Cancelled     = "CANCELLED"
@@ -29,9 +30,13 @@ func Transition(current, event string) (string, error) {
 		case "PaymentCompleted":
 			return Confirmed, nil
 		case "PaymentFailed":
-			return Cancelled, nil
+			return Cancelling, nil
 		case "InventoryRejected":
 			return "", errors.New("stock rejection after reservation")
+		}
+	case Cancelling:
+		if event == "InventoryReleased" {
+			return Cancelled, nil
 		}
 	case Confirmed, Rejected, Cancelled:
 		return current, nil
