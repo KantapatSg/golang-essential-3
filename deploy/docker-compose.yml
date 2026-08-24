@@ -33,6 +33,7 @@ services:
       - -c
       - >-
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic task.events.v1 --partitions 1 --replication-factor 1
+        && /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic order.events.v1 --partitions 1 --replication-factor 1
         && /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic task.events.v1.dlq --partitions 1 --replication-factor 1
   clickhouse:
     # Pin the LTS minor line while using the Debian-based image. The Alpine
@@ -81,6 +82,24 @@ services:
       redis: { condition: service_healthy }
       kafka-init: { condition: service_completed_successfully }
     ports: ["127.0.0.1:50052:50052"]
+  inventory-service:
+    build: { context: .., dockerfile: deploy/Dockerfile, args: { SERVICE: inventory-service } }
+    environment: { INVENTORY_ADDR: ":50055", INVENTORY_HTTP_ADDR: ":9106" }
+    depends_on: { kafka-init: { condition: service_completed_successfully } }
+    ports: ["127.0.0.1:50055:50055"]
+  order-service:
+    build: { context: .., dockerfile: deploy/Dockerfile, args: { SERVICE: order-service } }
+    environment:
+      ORDER_ADDR: ":50056"
+      ORDER_HTTP_ADDR: ":9107"
+      INVENTORY_ADDR: "inventory-service:50055"
+      ORDER_DB_DSN: "postgres://app:app@postgres:5432/order_db?sslmode=disable"
+      KAFKA_BROKERS: "kafka:9092"
+    depends_on:
+      postgres: { condition: service_healthy }
+      inventory-service: { condition: service_started }
+      kafka-init: { condition: service_completed_successfully }
+    ports: ["127.0.0.1:50056:50056"]
   activity-service:
     build: { context: .., dockerfile: deploy/Dockerfile, args: { SERVICE: activity-service } }
     environment:

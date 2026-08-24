@@ -1,0 +1,13 @@
+syntax = "proto3";
+package notification.v1;
+option go_package = "github.com/KantapatSg/golang-essential-3/contracts/gen/go/notification/v1;notificationv1";
+
+service NotificationService { rpc ListNotifications(ListNotificationsRequest) returns (ListNotificationsResponse); rpc UnreadCount(UnreadCountRequest) returns (UnreadCountResponse); rpc MarkAsRead(MarkAsReadRequest) returns (Notification); rpc MarkAllAsRead(MarkAllAsReadRequest) returns (Empty); }
+message Notification { string id = 1; string user_id = 2; string order_id = 3; string type = 4; string message = 5; bool read = 6; string created_at = 7; }
+message ListNotificationsRequest { int32 page = 1; int32 page_size = 2; }
+message ListNotificationsResponse { repeated Notification notifications = 1; int32 total = 2; }
+message UnreadCountRequest {}
+message UnreadCountResponse { int32 count = 1; }
+message MarkAsReadRequest { string id = 1; }
+message MarkAllAsReadRequest {}
+message Empty {}

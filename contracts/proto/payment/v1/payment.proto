@@ -1,0 +1,9 @@
+syntax = "proto3";
+package payment.v1;
+option go_package = "github.com/KantapatSg/golang-essential-3/contracts/gen/go/payment/v1;paymentv1";
+
+service PaymentService { rpc ListPayments(ListPaymentsRequest) returns (ListPaymentsResponse); rpc GetPayment(GetPaymentRequest) returns (Payment); }
+message Payment { string id = 1; string order_id = 2; string status = 3; int64 amount_minor = 4; string currency = 5; string reason = 6; string created_at = 7; }
+message ListPaymentsRequest { int32 page = 1; int32 page_size = 2; }
+message ListPaymentsResponse { repeated Payment payments = 1; int32 total = 2; }
+message GetPaymentRequest { string order_id = 1; }

@@ -1,0 +1,8 @@
+syntax = "proto3";
+package activity.v1;
+option go_package = "github.com/KantapatSg/golang-essential-3/contracts/gen/go/activity/v1;activityv1";
+
+service OrderActivityService { rpc ListOrderActivities(ListOrderActivitiesRequest) returns (ListOrderActivitiesResponse); }
+message OrderActivity { string id = 1; string order_id = 2; string event_type = 3; string reason = 4; string occurred_at = 5; }
+message ListOrderActivitiesRequest { string order_id = 1; int32 page = 2; int32 page_size = 3; }
+message ListOrderActivitiesResponse { repeated OrderActivity activities = 1; int32 total = 2; }
