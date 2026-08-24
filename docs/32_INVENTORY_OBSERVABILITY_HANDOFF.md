@@ -104,7 +104,7 @@ Luna High ต้องเริ่มตามลำดับนี้ ห้า
 | P5 | Prometheus transaction/cache/gRPC metrics | Passed |
 | P6 | Grafana dashboards และ frontend portfolio UX | Passed |
 | P7 | Focused/full local/browser/failure acceptance | Passed |
-| P8 | Docs/evidence, commit/push/CI/pre-deploy tag | In progress — waiting for CI/tag |
+| P8 | Docs/evidence, commit/push/CI/pre-deploy tag | Passed — CI green; tag handoff pending |
 | Render | Deployment | **HOLD** |
 
 ## 6. Phase Details
@@ -526,3 +526,13 @@ v0.3.0-inventory-observability-predeploy หลัง CI green เท่าน�
 - ต้องใช้ secret, paid service หรือ cloud resource
 - Local browser/ClickHouse/Redis/Grafana acceptance ยังไม่ผ่านแต่ขั้นต่อไปคือ push/tag
 - P8 ผ่านแล้วและขั้นต่อไปคือ Render deployment
+
+## 11. Exact Deploy Resume Point — P8 complete
+
+- Branch: `codex/inventory-observability-revision`
+- CI-green commit: `d01f1e32b706242a22717fe9193055ecd6917316`
+- CI run: `32713281493` (all required jobs passed)
+- Release tag: `v0.3.0-inventory-observability-predeploy` is created only on that commit
+- Rollback tags: `v0.1.0-predeploy`, `v0.2.0-order-predeploy`, and
+  `v0.2.1-order-predeploy` remain unchanged
+- Render: **HOLD**; no cloud resource or paid service was created

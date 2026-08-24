@@ -299,8 +299,7 @@ tests; the retained Compose Redis service was not stopped during this acceptance
 
 ## P8 — Release handoff gates
 
-**Status:** **Local release gates passed; public CI and pre-deploy tag are the remaining release
-actions.**
+**Status:** **Local gates and public CI passed; pre-deploy tag is the final release action.**
 
 Final local checks on the candidate branch:
 
@@ -325,3 +324,15 @@ inputs are intentionally excluded from release staging: `AGENTS.md`, untracked d
 and generated `graphify-out/`. They contain no runtime fix. Public branch/CI and
 `v0.3.0-inventory-observability-predeploy` must point to the same final commit; Render remains
 HOLD and no cloud resource is created.
+
+Public CI verification for the final candidate:
+
+```text
+commit: d01f1e32b706242a22717fe9193055ecd6917316
+run:    32713281493
+jobs:   backend, frontend, compose, integration — passed
+url:    https://github.com/KantapatSg/golang-essential-3/actions/runs/32713281493
+```
+
+The final tag must be created on this exact CI-green commit. Existing rollback tags remain
+unchanged; Render deployment remains HOLD.

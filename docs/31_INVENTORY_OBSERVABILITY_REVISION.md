@@ -2,7 +2,7 @@
 
 > Updated: 2026-08-24 (Asia/Bangkok)
 >
-> Status: **Implemented through P7; P8 release handoff recorded in docs/33**
+> Status: **P0–P8 verified; pre-deploy tag handoff recorded in docs/33**
 >
 > เอกสารนี้เป็น post-release hardening revision ต่อจาก Order release
 > `v0.2.1-order-predeploy` โดยไม่แก้ย้อนหลังหรือใช้แทน evidence ใน docs 26–30
@@ -320,6 +320,10 @@ P4 runtime evidence now retains a monthly `PARTITION BY toYYYYMM(event_date)` be
 contains retained fixtures. This bounded partition key is consistent with the V2 sort key and
 avoids daily/high-cardinality partitions. The decision is additive: V1 is untouched, no existing
 partition is dropped, and the design is revisited only with measured part/row evidence.
+
+P4 execution clarification: the live V2 migration uses `Int64` for `amount_minor` so the typed
+projection matches the Go aggregation and signed analytical test fixtures; business revenue still
+sums only canonical `OrderConfirmed` amounts and does not infer outcomes from Payment events.
 
 หลักออกแบบ:
 
