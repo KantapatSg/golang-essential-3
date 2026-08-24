@@ -123,14 +123,13 @@ Critical invariants:
 
 ## 6. Exact Resume Point
 
-รอบ implement ถัดไปให้เริ่มตรงนี้ตามลำดับ:
+สถานะปัจจุบันจบ R0–R11 แล้ว ให้เริ่มตรวจสอบจากจุดนี้เมื่อกลับมาอ่านต่อ:
 
-1. ตรวจ `git status --short --branch` และ review uncommitted draft ทุกไฟล์
-2. รักษา `main`, `v0.1.0-predeploy` และ existing `v0.2.0-order-predeploy` โดยห้าม reset/retag
-3. รัน R9 quality/recovery checks หลังแก้ refresh-cookie boundary
-4. อัปเดต evidence ให้ผูกกับ commit SHA เดียว
-5. commit/push, ตรวจ CI และสร้าง tag ใหม่ที่ไม่ทับ tag เดิม
-6. หยุดก่อน Render R12
+1. ตรวจ `git status --short --branch` และยืนยันว่า worktree สะอาด
+2. ยืนยัน `v0.2.1-order-predeploy` ชี้ไปที่ verified runtime commit `dbb326c`
+3. รักษา `main`, `v0.1.0-predeploy` และ existing `v0.2.0-order-predeploy` โดยห้าม reset/retag
+4. อ่าน evidence R0–R11 ก่อนทำงานใหม่ และอย่ารัน acceptance ซ้ำโดยไม่มี scope ใหม่
+5. หยุดก่อน Render R12; การ deploy ต้องได้รับคำสั่งใหม่และใช้ Render plan แยกต่างหาก
 
 ถ้า R0 พบ baseline test fail ให้ diagnose และแยกให้ได้ว่าเป็น pre-existing หรือเกิดจาก revision
 ก่อนแก้ ห้ามข้ามไป R1 ด้วย assumption
@@ -200,7 +199,10 @@ Git status:
 หาก blocked ต้องระบุ reproduced command, observed output, expected output และ safe next step
 ไม่แก้แบบสุ่มหรือวน restart โดยไม่มี hypothesis
 
-## 10. Handoff Prompt for Luna High
+## 10. Historical Handoff Prompt for Luna High (R0–R11 complete)
+
+ข้อความด้านล่างเป็น prompt ที่ใช้เริ่ม revision นี้ เก็บไว้เพื่อทบทวนเท่านั้น
+ห้ามใช้เพื่อ rerun หรือ retag release ที่ผ่านแล้ว
 
 ```text
 Implement the Order Platform revision in golang-essential-3.
