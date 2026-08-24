@@ -41,6 +41,16 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .muted, .page-intro { color: var(--muted); }
 .page-intro { max-width: 760px; margin: -1rem 0 2rem; line-height: 1.7; }
 .hint { color: var(--muted); font-size: .68rem; line-height: 1.7; }
+.cache-badge { display: inline-flex; align-items: center; padding: .16rem .38rem; border: 1px solid currentColor; font: 700 .58rem "Cascadia Mono", monospace; letter-spacing: .08em; }
+.cache-hit { color: var(--mint); }
+.cache-miss { color: var(--amber); }
+.cache-bypass { color: var(--coral); }
+.adjustment-panel { display: grid; gap: 1.25rem; margin-bottom: 1.2rem; }
+.adjustment-panel h2 { margin: 0; }
+.adjustment-form { display: grid; grid-template-columns: minmax(180px, 1.4fr) minmax(100px, .5fr) minmax(180px, 1fr) auto; align-items: end; gap: .75rem; }
+.success-note { margin: 0; color: var(--mint); font-family: "Cascadia Mono", monospace; font-size: .72rem; }
+.positive-number { color: var(--mint); }
+.negative-number { color: var(--coral); }
 
 .wordmark { display: flex; align-items: center; gap: .7rem; min-width: max-content; text-transform: uppercase; }
 .wordmark .mark { display: grid; place-items: center; width: 36px; height: 36px; color: var(--ink); background: var(--amber); font: 800 .65rem "Cascadia Mono", monospace; clip-path: polygon(0 0, 100% 0, 100% 72%, 72% 100%, 0 100%); }
@@ -308,6 +318,7 @@ input, textarea, select { width: 100%; border: 1px solid var(--line); border-rad
   .order-meta { grid-template-columns: 1fr; }
   .notification-list article { grid-template-columns: 8px 1fr; }
   .notification-list article button { grid-column: 2; width: max-content; }
+  .adjustment-form { grid-template-columns: 1fr; }
   .activity-stream article { grid-template-columns: 10px 1fr; }
   .activity-stream time, .activity-stream a { grid-column: 2; }
   .app-footer { flex-direction: column; padding: 20px; }

@@ -8,6 +8,7 @@ import type {
   Payment,
   Product,
   Reservation,
+  StockMovement,
   StatusCount,
   Task,
   TimeseriesPoint,
@@ -22,7 +23,7 @@ const apiBaseURL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
 export const setAccessToken = (token: string | null) => { accessToken = token }
 export const getAccessToken = () => accessToken
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function requestMeta<T>(path: string, init: RequestInit = {}): Promise<{ data: T; headers: Headers }> {
   const headers = new Headers(init.headers)
   headers.set('Content-Type', 'application/json')
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
@@ -37,8 +38,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const body = await response.json().catch(() => ({})) as { error?: string }
     throw new Error(body.error || `Request failed (${response.status})`)
   }
-  if (response.status === 204) return undefined as T
-  return response.json() as Promise<T>
+  if (response.status === 204) return { data: undefined as T, headers: response.headers }
+  return { data: await response.json() as T, headers: response.headers }
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const result = await requestMeta<T>(path, init)
+  return result.data
 }
 
 function list<T>(items: T[] | null | undefined): T[] {
@@ -54,8 +60,8 @@ export const api = {
     request<void>('/api/v1/auth/logout', { method: 'POST', body: JSON.stringify({}) }),
 
   products: async () => {
-    const response = await request<{ products?: Product[]; total?: number }>('/api/v1/products?page=1&page_size=100')
-    return { products: list(response.products).map(product => ({ ...product, available: product.available ?? 0 })), total: response.total ?? 0 }
+    const response = await requestMeta<{ products?: Product[]; total?: number }>('/api/v1/products?page=1&page_size=100')
+    return { products: list(response.data.products).map(product => ({ ...product, available: product.available ?? 0 })), total: response.data.total ?? 0, cacheStatus: response.headers.get('X-Cache-Status') ?? 'BYPASS' }
   },
   orders: async () => {
     const response = await request<{ items?: Order[]; total?: number }>('/api/v1/orders?page=1&page_size=100')
@@ -87,6 +93,16 @@ export const api = {
   reservations: async () => {
     const response = await request<{ reservations?: Reservation[]; total?: number }>('/api/v1/admin/inventory/reservations')
     return { reservations: list(response.reservations), total: response.total ?? 0 }
+  },
+  inventory: async () => {
+    const response = await request<{ products?: Product[]; total?: number }>('/api/v1/admin/inventory')
+    return { products: list(response.products), total: response.total ?? 0 }
+  },
+  adjustStock: (payload: { product_id: string; delta: number; reason: string }) =>
+    request<{ product: Product; movement: StockMovement; replayed: boolean }>('/api/v1/admin/inventory/adjustments', { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify(payload) }),
+  stockMovements: async (productID?: string) => {
+    const response = await request<{ movements?: StockMovement[]; total?: number }>(`/api/v1/admin/inventory/movements${productID ? `?product_id=${encodeURIComponent(productID)}` : ''}`)
+    return { movements: list(response.movements), total: response.total ?? 0 }
   },
   payments: async () => {
     const response = await request<{ payments?: Payment[]; total?: number }>('/api/v1/admin/payments')

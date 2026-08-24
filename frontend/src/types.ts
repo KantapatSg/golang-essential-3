@@ -27,6 +27,15 @@ export type Product = {
   currency: string
   available: number
 }
+export type StockMovement = {
+  id: string
+  product_id: string
+  delta: number
+  reason: string
+  balance_after: number
+  idempotency_key: string
+  created_at: string
+}
 
 export type OrderItem = {
   product_id: string
@@ -39,6 +48,7 @@ export type OrderItem = {
 export type OrderStatus =
   | 'PENDING'
   | 'STOCK_RESERVED'
+  | 'CANCELLING'
   | 'CONFIRMED'
   | 'CANCELLED'
   | 'REJECTED'

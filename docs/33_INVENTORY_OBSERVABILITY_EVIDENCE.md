@@ -206,3 +206,26 @@ curl http://localhost:9107/metrics                              # service_ready 
 
 The existing running images predate these counters; P7 will rebuild only application images and
 capture live exposition plus Prometheus target/series evidence.
+
+## P6 — Grafana and frontend portfolio UX
+
+**Status:** **Passed frontend/Grafana focused gates.**
+
+- The member Catalog now shows the live `X-Cache-Status` badge (HIT/MISS/BYPASS) beside the
+  asynchronous stock explanation. The admin Inventory surface now supports signed stock
+  adjustments with idempotency, displays available balances, reservation state, and the durable
+  stock movement ledger.
+- Analytics copy identifies ClickHouse V2 and confirmed-event revenue semantics. Existing polling
+  Order, Activity, Notification, Payment, and System flows remain intact.
+- Grafana now provisions six dashboards: Platform Overview, Event Pipeline, Business Analytics
+  (V2), Order Transactions, Redis & Inventory, and ClickHouse V2. The former Task-only business
+  query was replaced by typed V2 event/revenue queries; Task dashboards remain compatibility-only.
+
+**Focused verification:**
+
+```text
+npm test -- --run   # 8 tests passed
+npm run lint        # passed
+npm run build       # passed; Vite production bundle generated
+dashboard JSON ConvertFrom-Json validation # six dashboards valid
+```
