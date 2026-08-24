@@ -229,3 +229,61 @@ npm run lint        # passed
 npm run build       # passed; Vite production bundle generated
 dashboard JSON ConvertFrom-Json validation # six dashboards valid
 ```
+
+## P7 — Compose, API, browser, and observability acceptance
+
+**Status:** **Passed — local acceptance completed against retained named volumes.**
+
+The acceptance run rebuilt only the affected application images and created the additive
+`inventory_db` database because it was absent from the retained Postgres volume. No database,
+schema, topic, or Docker volume was dropped or reset.
+
+**Compose/readiness evidence:**
+
+```text
+docker compose -f deploy/docker-compose.yml config --quiet              # passed
+docker compose ... build inventory-service order-service api-gateway \
+  analytics-service analytics-worker frontend                         # passed
+docker compose ... up -d inventory-service order-service api-gateway \
+  analytics-service analytics-worker frontend                          # passed
+Gateway /health/live, /health/ready, /openapi.yaml                     # HTTP 200
+Frontend :3000/, Grafana :3001/api/health, Prometheus /-/ready         # HTTP 200
+Prometheus active targets: 10; healthy targets: 10
+```
+
+**Live business flow evidence:**
+
+- Catalog returned `X-Cache-Status: MISS` then `HIT`; after a signed admin adjustment, the next
+  catalog read returned `MISS` then `HIT`, proving mutation invalidation and repopulation.
+- The same stock adjustment Idempotency-Key returned the same movement with `replayed: true` and
+  only one movement row. The admin movement ledger was readable after the transaction.
+- Three new member orders reached `CONFIRMED`, `CANCELLED`, and `REJECTED`. Their Activity
+  timelines contained canonical events, including `OrderConfirmed`/`InventoryConsumed` and
+  `PaymentFailed`/`InventoryReleaseRequested`/`InventoryReleased`/`OrderCancelled`.
+- Persisted in-app Notifications contained the order-created, payment, inventory, and terminal
+  projections for those order IDs.
+- ClickHouse V2 contained only received live envelopes for the acceptance order IDs. A separate
+  acceptance order was processed with `RUN_ID=p7-accept-25690824160755`; its V2 rows included
+  `OrderCreated`, `InventoryReserved`, `PaymentCompleted`, `OrderConfirmed`, and
+  `InventoryConsumed` with that run ID. No historical Payment rows were converted to terminal
+  events.
+- Live service metrics exposed `service_ready 1`, Inventory cache/transaction counters, and Order
+  transaction counters. Prometheus reported all 10 configured targets healthy; Grafana health was
+  `{"database":"ok","version":"11.5.2"...}`.
+
+**Browser evidence:**
+
+```text
+PLAYWRIGHT_BASE_URL=http://localhost:3000 E2E_REAL_BACKEND=1 npm run e2e
+3 passed (landing/login, member success/decline/out-of-stock/notifications,
+admin operations navigation)
+```
+
+The first attempt against the Vite development origin (`127.0.0.1:4173`) was intentionally
+retained as a harness finding: that origin has no API proxy. The Compose frontend origin uses the
+Nginx `/api` proxy and passed all three browser scenarios.
+
+**Known acceptance limitations:** retained volumes include earlier Task/Order fixtures, so
+aggregate counts are not clean-room counts. Acceptance assertions were scoped to newly-created
+order IDs and the unique run ID above. Redis-down `BYPASS` remains covered by focused service
+tests; the retained Compose Redis service was not stopped during this acceptance run.
