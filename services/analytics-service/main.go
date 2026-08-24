@@ -111,10 +111,84 @@ func (s *clickhouseStore) Query(ctx context.Context, sql string) ([][]string, er
 
 type analyticsServer struct {
 	analyticsv1.UnimplementedAnalyticsServiceServer
+	analyticsv1.UnimplementedOrderAnalyticsServiceServer
 	store              eventStore
 	requests           atomic.Uint64
 	queryErrors        atomic.Uint64
 	queryDurationNanos atomic.Uint64
+}
+
+func (s *analyticsServer) OrderSummary(ctx context.Context, req *analyticsv1.OrderSummaryRequest) (*analyticsv1.OrderSummaryResponse, error) {
+	if req == nil {
+		req = &analyticsv1.OrderSummaryRequest{}
+	}
+	from, to, _, err := rangeSQL(&analyticsv1.TimeRange{From: req.GetFrom(), To: req.GetTo()}, 100)
+	if err != nil {
+		return nil, err
+	}
+	out := &analyticsv1.OrderSummaryResponse{Currency: "USD", Through: to}
+	if s.store == nil {
+		return out, nil
+	}
+	rows, e := s.store.Query(ctx, fmt.Sprintf("SELECT event_type,count() FROM analytics.order_events FINAL WHERE occurred_at >= parseDateTimeBestEffort('%s') AND occurred_at < parseDateTimeBestEffort('%s') GROUP BY event_type", from, to))
+	if e != nil {
+		return nil, status.Error(codes.Unavailable, "analytics store unavailable")
+	}
+	for _, r := range rows {
+		if len(r) != 2 {
+			continue
+		}
+		n, _ := strconv.ParseInt(r[1], 10, 64)
+		switch r[0] {
+		case "OrderCreated":
+			out.Created += n
+		case "OrderConfirmed", "PaymentCompleted":
+			out.Confirmed += n
+		case "InventoryRejected":
+			out.Rejected += n
+		case "OrderCancelled", "PaymentFailed":
+			out.Cancelled += n
+		}
+	}
+	return out, nil
+}
+func (s *analyticsServer) OrderFunnel(ctx context.Context, req *analyticsv1.OrderSummaryRequest) (*analyticsv1.OrderFunnelResponse, error) {
+	if req == nil {
+		req = &analyticsv1.OrderSummaryRequest{}
+	}
+	from, to, _, err := rangeSQL(&analyticsv1.TimeRange{From: req.GetFrom(), To: req.GetTo()}, 100)
+	if err != nil {
+		return nil, err
+	}
+	out := &analyticsv1.OrderFunnelResponse{Through: to}
+	if s.store == nil {
+		return out, nil
+	}
+	rows, e := s.store.Query(ctx, fmt.Sprintf("SELECT event_type,count() FROM analytics.order_events FINAL WHERE occurred_at >= parseDateTimeBestEffort('%s') AND occurred_at < parseDateTimeBestEffort('%s') GROUP BY event_type", from, to))
+	if e != nil {
+		return nil, status.Error(codes.Unavailable, "analytics store unavailable")
+	}
+	for _, r := range rows {
+		if len(r) != 2 {
+			continue
+		}
+		n, _ := strconv.ParseInt(r[1], 10, 64)
+		switch r[0] {
+		case "OrderCreated":
+			out.Created += n
+		case "InventoryReserved":
+			out.Reserved += n
+		case "PaymentCompleted":
+			out.Paid += n
+		case "OrderConfirmed":
+			out.Confirmed += n
+		case "InventoryRejected":
+			out.Rejected += n
+		case "OrderCancelled":
+			out.Cancelled += n
+		}
+	}
+	return out, nil
 }
 
 func (s *analyticsServer) observe(start time.Time, err error) {
@@ -284,6 +358,7 @@ func main() {
 	}
 	g := grpc.NewServer()
 	analyticsv1.RegisterAnalyticsServiceServer(g, srv)
+	analyticsv1.RegisterOrderAnalyticsServiceServer(g, srv)
 	ready := func(checkCtx context.Context) error { return nil }
 	if ch, ok := store.(*clickhouseStore); ok {
 		ready = ch.Ping

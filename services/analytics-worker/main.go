@@ -83,6 +83,51 @@ type worker struct {
 	dlq               atomic.Uint64
 	lastEventUnixNano atomic.Int64
 	consumerLag       atomic.Int64
+	orderProcessed    atomic.Uint64
+}
+
+type orderAnalyticsEvent struct {
+	SchemaVersion int             `json:"schema_version"`
+	EventID       string          `json:"event_id"`
+	EventType     string          `json:"event_type"`
+	CustomerID    string          `json:"customer_id"`
+	OrderID       string          `json:"order_id"`
+	OccurredAt    time.Time       `json:"occurred_at"`
+	Payload       json.RawMessage `json:"payload"`
+}
+
+func (w *worker) runOrders(ctx context.Context, brokers string) {
+	if brokers == "" || w.endpoint == "" {
+		return
+	}
+	r := kafka.NewReader(kafka.ReaderConfig{Brokers: strings.Split(brokers, ","), Topic: "order.events.v1", GroupID: "analytics-order-v1", MinBytes: 1, MaxBytes: 10 << 20, StartOffset: kafka.FirstOffset})
+	defer r.Close()
+	for {
+		m, e := r.FetchMessage(ctx)
+		if e != nil {
+			return
+		}
+		var ev orderAnalyticsEvent
+		if json.Unmarshal(m.Value, &ev) != nil || ev.EventID == "" || ev.EventType == "" {
+			continue
+		}
+		occurred := ev.OccurredAt.UTC().Format("2006-01-02 15:04:05.000")
+		row := map[string]any{"event_id": ev.EventID, "event_type": ev.EventType, "customer_id": ev.CustomerID, "order_id": ev.OrderID, "occurred_at": occurred, "payload_json": string(ev.Payload)}
+		b, _ := json.Marshal(row)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, w.endpoint+"?query=INSERT%20INTO%20analytics.order_events%20FORMAT%20JSONEachRow", strings.NewReader(string(b)+"\n"))
+		resp, e := w.http.Do(req)
+		if e != nil {
+			continue
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			continue
+		}
+		if e = r.CommitMessages(ctx, m); e != nil {
+			continue
+		}
+		w.orderProcessed.Add(1)
+	}
 }
 
 func (w *worker) validate(b []byte) (taskEvent, error) {
@@ -301,6 +346,7 @@ func main() {
 			log.Printf("worker health: %v", err)
 		}
 	}()
+	go w.runOrders(ctx, brokers)
 	if err := w.run(ctx, os.Getenv("KAFKA_BROKERS")); err != nil && !errors.Is(err, context.Canceled) {
 		log.Printf("analytics worker stopped: %v", err)
 	}
