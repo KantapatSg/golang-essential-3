@@ -13,6 +13,13 @@ Platform revision is locally/CI verified through R11 on `codex/order-platform-re
 `v0.2.0-order-predeploy` is preserved as-is; never use
 Task-version evidence to substantiate Order behavior.
 
+The Inventory and Observability post-release revision is implemented and locally/CI verified in
+`docs/31_INVENTORY_OBSERVABILITY_REVISION.md` and
+`docs/32_INVENTORY_OBSERVABILITY_HANDOFF.md`; use
+`docs/33_INVENTORY_OBSERVABILITY_EVIDENCE.md` for its phase evidence. Do not use
+Order R0-R11 evidence to claim the new terminal-event, durable-inventory, Redis,
+ClickHouse V2, transaction-metric, dashboard, or Add Stock behavior exists.
+
 ## Source of truth
 
 For the verified Task release:
@@ -29,6 +36,15 @@ For the implemented Order revision:
 3. Work through R0-R11 in `docs/28_ORDER_IMPLEMENTATION_PLAN.md` in order.
 4. Preserve Task evidence and the `v0.1.0-predeploy` rollback baseline.
 5. Follow `docs/17_COMMENTING_GUIDE.md` plus the Order-specific comment rules in docs 28/29.
+
+For the Inventory and Observability revision:
+
+1. Read the complete Order source-of-truth set above and `docs/30_ORDER_REVISION_EVIDENCE.md`.
+2. Then read `docs/31_INVENTORY_OBSERVABILITY_REVISION.md` and
+   `docs/32_INVENTORY_OBSERVABILITY_HANDOFF.md` completely.
+3. Start from the Exact Resume Point in docs 32 and work through P0-P8 in order.
+4. Treat docs 31/32 as the target only for this post-release revision; preserve historical evidence.
+5. Do not mark a P phase passed without its focused tests and reconciliation evidence.
 
 ## Architecture rules
 
@@ -50,6 +66,16 @@ weakening the general boundaries above:
 - Consumers are at-least-once and must make business side effects idempotent.
 - Do not put order, user, payment, event, email, or request identifiers in metric labels.
 - Use additive compatibility-safe migrations through R11; do not delete Task data or volumes.
+
+For Inventory and Observability P0-P8, add these rules without weakening any boundary above:
+
+- PostgreSQL inventory state and movement ledger are authoritative; Redis catalog data is disposable.
+- Catalog cache failure fails open to Inventory PostgreSQL; Identity refresh-session failure remains fail closed.
+- `OrderConfirmed`, `OrderRejected`, and `OrderCancelled` are canonical terminal outcomes.
+- Payment decline remains `CANCELLING` until `InventoryReleased`; do not report terminal cancellation early.
+- Preserve ClickHouse V1 history and migrate reads to a typed V2 projection without fabricating outcomes.
+- Prometheus stores bounded aggregate metrics; never label metrics with order, user, product, event, request,
+  email, SKU, token, or free-form error identifiers.
 
 ## Implementation rules
 
@@ -87,3 +113,6 @@ Pop-Location
 The Task release is already stopped before historical Render Phase 11. The Order revision is
 verified through R11 and stops before R12. Do not create paid cloud resources, configure a
 custom domain, or deploy to Render without explicit approval.
+
+The Inventory and Observability P0-P8 revision stops after the CI-green
+`v0.3.0-inventory-observability-predeploy` handoff and before any Render action.
