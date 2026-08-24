@@ -287,3 +287,32 @@ Nginx `/api` proxy and passed all three browser scenarios.
 aggregate counts are not clean-room counts. Acceptance assertions were scoped to newly-created
 order IDs and the unique run ID above. Redis-down `BYPASS` remains covered by focused service
 tests; the retained Compose Redis service was not stopped during this acceptance run.
+
+## P8 — Release handoff gates
+
+**Status:** **Local release gates passed; public CI and pre-deploy tag are the remaining release
+actions.**
+
+Final local checks on the candidate branch:
+
+```text
+make test                                      # passed: all Go packages + 8 frontend tests
+make vet                                       # passed after dcf81c7 replay clone fix
+make build                                     # passed: Go binaries + Vite production bundle
+make compose-config                            # passed
+powershell -ExecutionPolicy Bypass -File scripts/smoke-test.ps1  # passed
+Push-Location frontend; npm ci; npm run lint; npm test; npm run build; Pop-Location  # passed
+fallback secret scan (gitleaks unavailable)    # no private-key/token signatures found
+```
+
+`npm audit --audit-level=high` reports two existing moderate React Router advisories and proposes
+a breaking `react-router-dom` 7 upgrade; no forced upgrade was applied in this pre-deploy scope.
+This remains a known limitation for the release report. No credential, session token, or private
+key was added to the repository.
+
+The runtime fix and evidence are committed separately (`dcf81c7`, `d7bebf5`). The preserved dirty
+inputs are intentionally excluded from release staging: `AGENTS.md`, untracked design handoffs
+`docs/31_INVENTORY_OBSERVABILITY_REVISION.md` and `docs/32_INVENTORY_OBSERVABILITY_HANDOFF.md`,
+and generated `graphify-out/`. They contain no runtime fix. Public branch/CI and
+`v0.3.0-inventory-observability-predeploy` must point to the same final commit; Render remains
+HOLD and no cloud resource is created.
