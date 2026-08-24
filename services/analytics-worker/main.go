@@ -78,6 +78,8 @@ func (e *taskEvent) UnmarshalJSON(data []byte) error {
 type worker struct {
 	endpoint          string
 	http              *http.Client
+	environment       string
+	runID             string
 	processed         atomic.Uint64
 	retries           atomic.Uint64
 	dlq               atomic.Uint64
@@ -95,6 +97,18 @@ type orderAnalyticsEvent struct {
 	OccurredAt    time.Time       `json:"occurred_at"`
 	Payload       json.RawMessage `json:"payload"`
 }
+type orderAnalyticsPayload struct {
+	Order struct {
+		TotalMinor int64  `json:"total_minor"`
+		Currency   string `json:"currency"`
+		Items      []struct {
+			ProductID string `json:"product_id"`
+		} `json:"items"`
+	} `json:"order"`
+	AmountMinor int64  `json:"amount_minor"`
+	Currency    string `json:"currency"`
+	Reason      string `json:"reason"`
+}
 
 func (w *worker) runOrders(ctx context.Context, brokers string) {
 	if brokers == "" || w.endpoint == "" {
@@ -111,10 +125,45 @@ func (w *worker) runOrders(ctx context.Context, brokers string) {
 		if json.Unmarshal(m.Value, &ev) != nil || ev.EventID == "" || ev.EventType == "" {
 			continue
 		}
-		occurred := ev.OccurredAt.UTC().Format("2006-01-02 15:04:05.000")
-		row := map[string]any{"event_id": ev.EventID, "event_type": ev.EventType, "customer_id": ev.CustomerID, "order_id": ev.OrderID, "occurred_at": occurred, "payload_json": string(ev.Payload)}
+		if ev.OrderID == "" || ev.CustomerID == "" {
+			_ = r.CommitMessages(ctx, m)
+			continue
+		}
+		var payload orderAnalyticsPayload
+		if err := json.Unmarshal(ev.Payload, &payload); err != nil {
+			continue
+		}
+		amount := payload.AmountMinor
+		if amount == 0 {
+			amount = payload.Order.TotalMinor
+		}
+		currency := payload.Currency
+		if currency == "" {
+			currency = payload.Order.Currency
+		}
+		if currency == "" {
+			currency = "USD"
+		}
+		status := ""
+		switch ev.EventType {
+		case "OrderCreated":
+			status = "PENDING"
+		case "InventoryReserved":
+			status = "STOCK_RESERVED"
+		case "OrderConfirmed", "InventoryConsumed":
+			status = "CONFIRMED"
+		case "OrderRejected":
+			status = "REJECTED"
+		case "OrderCancelled":
+			status = "CANCELLED"
+		}
+		productIDs := make([]string, 0, len(payload.Order.Items))
+		for _, item := range payload.Order.Items {
+			productIDs = append(productIDs, item.ProductID)
+		}
+		row := map[string]any{"event_id": ev.EventID, "schema_version": maxSchema(ev.SchemaVersion), "event_type": ev.EventType, "customer_id": ev.CustomerID, "order_id": ev.OrderID, "order_status": status, "product_ids": productIDs, "amount_minor": amount, "currency": currency, "reason": payload.Reason, "environment": w.environment, "run_id": w.runID, "occurred_at": ev.OccurredAt.UTC().Format("2006-01-02 15:04:05.000"), "payload_json": string(ev.Payload)}
 		b, _ := json.Marshal(row)
-		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, w.endpoint+"?query=INSERT%20INTO%20analytics.order_events%20FORMAT%20JSONEachRow", strings.NewReader(string(b)+"\n"))
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, w.endpoint+"?query=INSERT%20INTO%20analytics.order_events_v2%20FORMAT%20JSONEachRow", strings.NewReader(string(b)+"\n"))
 		resp, e := w.http.Do(req)
 		if e != nil {
 			continue
@@ -128,6 +177,12 @@ func (w *worker) runOrders(ctx context.Context, brokers string) {
 		}
 		w.orderProcessed.Add(1)
 	}
+}
+func maxSchema(v int) int {
+	if v < 1 {
+		return 1
+	}
+	return v
 }
 
 func (w *worker) validate(b []byte) (taskEvent, error) {
@@ -310,7 +365,7 @@ func (w *worker) flush(ctx context.Context, reader *kafka.Reader, batch []kafka.
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
-	w := &worker{endpoint: os.Getenv("CLICKHOUSE_URL"), http: &http.Client{Timeout: 5 * time.Second}}
+	w := &worker{endpoint: os.Getenv("CLICKHOUSE_URL"), http: &http.Client{Timeout: 5 * time.Second}, environment: env("ENVIRONMENT", "local"), runID: os.Getenv("RUN_ID")}
 	brokers := strings.TrimSpace(os.Getenv("KAFKA_BROKERS"))
 	ready := func(checkCtx context.Context) error {
 		if w.endpoint == "" {

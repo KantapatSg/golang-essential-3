@@ -76,6 +76,9 @@ func (s *clickhouseStore) Query(ctx context.Context, sql string) ([][]string, er
 			return nil, fmt.Errorf("decode clickhouse row: %w", err)
 		}
 		keys := []string{"event_type", "count()"}
+		if strings.Contains(sql, "sum(amount_minor)") {
+			keys = []string{"event_type", "count()", "sum(amount_minor)"}
+		}
 		if strings.Contains(sql, "task_status") {
 			keys = []string{"task_status", "count()"}
 		}
@@ -89,6 +92,11 @@ func (s *clickhouseStore) Query(ctx context.Context, sql string) ([][]string, er
 				raw = object[strings.TrimSuffix(key, "()")]
 				if !ok && key == "count()" {
 					raw = object["count"]
+				}
+			}
+			if len(raw) == 0 {
+				if key == "sum(amount_minor)" {
+					raw = object["sum_amount_minor"]
 				}
 			}
 			if len(raw) == 0 {
@@ -130,23 +138,26 @@ func (s *analyticsServer) OrderSummary(ctx context.Context, req *analyticsv1.Ord
 	if s.store == nil {
 		return out, nil
 	}
-	rows, e := s.store.Query(ctx, fmt.Sprintf("SELECT event_type,count() FROM analytics.order_events FINAL WHERE occurred_at >= parseDateTimeBestEffort('%s') AND occurred_at < parseDateTimeBestEffort('%s') GROUP BY event_type", from, to))
+	rows, e := s.store.Query(ctx, fmt.Sprintf("SELECT event_type,count(),sum(amount_minor) AS sum_amount_minor FROM analytics.order_events_v2 FINAL WHERE event_date >= toDate(parseDateTimeBestEffort('%s')) AND event_date <= toDate(parseDateTimeBestEffort('%s')) AND occurred_at >= parseDateTimeBestEffort('%s') AND occurred_at < parseDateTimeBestEffort('%s') GROUP BY event_type ORDER BY event_type LIMIT 100", from, to, from, to))
 	if e != nil {
 		return nil, status.Error(codes.Unavailable, "analytics store unavailable")
 	}
 	for _, r := range rows {
-		if len(r) != 2 {
+		if len(r) < 2 {
 			continue
 		}
 		n, _ := strconv.ParseInt(r[1], 10, 64)
 		switch r[0] {
 		case "OrderCreated":
 			out.Created += n
-		case "OrderConfirmed", "PaymentCompleted":
+		case "OrderConfirmed":
 			out.Confirmed += n
-		case "InventoryRejected":
+			if len(r) > 2 {
+				out.RevenueMinor, _ = strconv.ParseInt(r[2], 10, 64)
+			}
+		case "OrderRejected":
 			out.Rejected += n
-		case "OrderCancelled", "PaymentFailed":
+		case "OrderCancelled":
 			out.Cancelled += n
 		}
 	}
@@ -164,7 +175,7 @@ func (s *analyticsServer) OrderFunnel(ctx context.Context, req *analyticsv1.Orde
 	if s.store == nil {
 		return out, nil
 	}
-	rows, e := s.store.Query(ctx, fmt.Sprintf("SELECT event_type,count() FROM analytics.order_events FINAL WHERE occurred_at >= parseDateTimeBestEffort('%s') AND occurred_at < parseDateTimeBestEffort('%s') GROUP BY event_type", from, to))
+	rows, e := s.store.Query(ctx, fmt.Sprintf("SELECT event_type,count() FROM analytics.order_events_v2 FINAL WHERE event_date >= toDate(parseDateTimeBestEffort('%s')) AND event_date <= toDate(parseDateTimeBestEffort('%s')) AND occurred_at >= parseDateTimeBestEffort('%s') AND occurred_at < parseDateTimeBestEffort('%s') GROUP BY event_type ORDER BY event_type LIMIT 100", from, to, from, to))
 	if e != nil {
 		return nil, status.Error(codes.Unavailable, "analytics store unavailable")
 	}
@@ -182,7 +193,7 @@ func (s *analyticsServer) OrderFunnel(ctx context.Context, req *analyticsv1.Orde
 			out.Paid += n
 		case "OrderConfirmed":
 			out.Confirmed += n
-		case "InventoryRejected":
+		case "OrderRejected":
 			out.Rejected += n
 		case "OrderCancelled":
 			out.Cancelled += n

@@ -136,7 +136,7 @@ services:
     ports: ["127.0.0.1:50054:50054"]
   analytics-worker:
     build: { context: .., dockerfile: deploy/Dockerfile, args: { SERVICE: analytics-worker } }
-    environment: { KAFKA_BROKERS: "kafka:9092", CLICKHOUSE_URL: "http://app:app@clickhouse:8123", ANALYTICS_WORKER_HTTP_ADDR: ":9105" }
+    environment: { KAFKA_BROKERS: "kafka:9092", CLICKHOUSE_URL: "http://app:app@clickhouse:8123", ANALYTICS_WORKER_HTTP_ADDR: ":9105", ENVIRONMENT: "local", RUN_ID: "${RUN_ID:-compose}" }
     depends_on:
       kafka-init: { condition: service_completed_successfully }
       clickhouse: { condition: service_healthy }

@@ -146,3 +146,41 @@ docker compose -f deploy/docker-compose.yml config --quiet                      
 
 P7 will exercise MISS -> HIT, post-adjustment invalidation -> MISS, and Redis-down BYPASS against
 a unique acceptance run while retaining the existing Redis volume.
+
+## P4 — ClickHouse Analytics V2
+
+**Status:** **Schema/query/worker focused implementation complete; end-to-end event reconciliation remains for P7.**
+
+- Added additive `analytics.order_events_v2`; V1 history and `analytics.order_events` remain
+  unchanged. V2 uses typed UUID/DateTime/Int64/Array columns, LowCardinality dimensions,
+  monthly partitions, and `ReplacingMergeTree(ingested_at)` with
+  `ORDER BY (event_date,event_type,order_id,event_id)`.
+- The analytics worker projects only received live envelopes into V2 and preserves event ID,
+  schema version, payload, environment, and optional acceptance `run_id`. It does not synthesize
+  terminal events from historical Payment rows. Kafka offsets commit only after ClickHouse insert.
+- Order Summary/Funnel now read V2 canonical events. Revenue sums `amount_minor` only for
+  `OrderConfirmed`; PaymentCompleted is not treated as confirmed revenue. Queries use the
+  `event_date` ORDER BY prefix, bounded grouping, and `FINAL` for immediate ReplacingMergeTree
+  correctness.
+
+**ClickHouse evidence (live additive schema, no data deletion):**
+
+```text
+DESCRIBE analytics.order_events_v2  # typed schema created successfully
+system.tables: ReplacingMergeTree / toYYYYMM(event_date) /
+  event_date,event_type,order_id,event_id
+EXPLAIN indexes=1 ... WHERE event_date >= toDate(now())  # bounded query plan; empty clean date range
+```
+
+**Rules applied:** `schema-pk-plan-before-creation`, `schema-pk-cardinality-order`,
+`schema-pk-prioritize-filters`, `schema-types-native-types`, `schema-types-lowcardinality`,
+`schema-partition-low-cardinality`, `insert-mutation-avoid-update`, and
+`insert-optimize-avoid-final`. V2 uses `FINAL` only in bounded reads; no `OPTIMIZE FINAL` or
+mutating UPDATE was introduced.
+
+**Focused verification:**
+
+```text
+go test ./services/analytics-service/... ./services/analytics-worker/...  # passed
+docker exec deploy-clickhouse-1 clickhouse-client ... 003_order_events_v2.sql # passed
+```

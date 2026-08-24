@@ -39,6 +39,14 @@ func TestAnalyticsMapsRowsIntoSummary(t *testing.T) {
 	}
 }
 
+func TestOrderSummaryUsesCanonicalConfirmationForRevenue(t *testing.T) {
+	s := &analyticsServer{store: &fakeStore{rows: [][]string{{"OrderCreated", "1", "0"}, {"PaymentCompleted", "1", "1299"}, {"OrderConfirmed", "1", "1299"}, {"OrderRejected", "1", "0"}, {"OrderCancelled", "1", "0"}}}}
+	out, err := s.OrderSummary(context.Background(), &analyticsv1.OrderSummaryRequest{})
+	if err != nil || out.Created != 1 || out.Confirmed != 1 || out.Rejected != 1 || out.Cancelled != 1 || out.RevenueMinor != 1299 {
+		t.Fatalf("unexpected canonical summary %#v %v", out, err)
+	}
+}
+
 func TestAnalyticsQueriesUseClickHouseFinalForImmediateDeduplication(t *testing.T) {
 	f := &fakeStore{rows: [][]string{{"task.created", "1"}}}
 	s := &analyticsServer{store: f}
