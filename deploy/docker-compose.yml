@@ -100,6 +100,11 @@ services:
       inventory-service: { condition: service_started }
       kafka-init: { condition: service_completed_successfully }
     ports: ["127.0.0.1:50056:50056"]
+  payment-service:
+    build: { context: .., dockerfile: deploy/Dockerfile, args: { SERVICE: payment-service } }
+    environment: { PAYMENT_ADDR: ":50057", PAYMENT_HTTP_ADDR: ":9108", KAFKA_BROKERS: "kafka:9092" }
+    depends_on: { kafka-init: { condition: service_completed_successfully } }
+    ports: ["127.0.0.1:50057:50057"]
   activity-service:
     build: { context: .., dockerfile: deploy/Dockerfile, args: { SERVICE: activity-service } }
     environment:

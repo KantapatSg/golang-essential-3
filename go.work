@@ -9,5 +9,6 @@ use (
 	./services/identity-service
 	./services/inventory-service
 	./services/order-service
+	./services/payment-service
 	./services/task-service
 )

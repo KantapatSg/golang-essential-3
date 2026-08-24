@@ -40,18 +40,24 @@ type reservation struct {
 }
 type createdPayload struct {
 	Order struct {
-		ID         string `json:"id"`
-		CustomerID string `json:"customer_id"`
-		Items      []struct {
+		ID              string `json:"id"`
+		CustomerID      string `json:"customer_id"`
+		TotalMinor      int64  `json:"total_minor"`
+		Currency        string `json:"currency"`
+		PaymentScenario string `json:"payment_scenario"`
+		Items           []struct {
 			ProductID string `json:"product_id"`
 			Quantity  int32  `json:"quantity"`
 		} `json:"items"`
 	} `json:"order"`
 }
 type compensationPayload struct {
-	OrderID    string `json:"order_id"`
-	CustomerID string `json:"customer_id"`
-	Reason     string `json:"reason"`
+	OrderID         string `json:"order_id"`
+	CustomerID      string `json:"customer_id"`
+	Reason          string `json:"reason"`
+	AmountMinor     int64  `json:"amount_minor,omitempty"`
+	Currency        string `json:"currency,omitempty"`
+	PaymentScenario string `json:"payment_scenario,omitempty"`
 }
 
 func (s *inventoryServer) ListProducts(_ context.Context, req *inventoryv1.ListProductsRequest) (*inventoryv1.ListProductsResponse, error) {
@@ -128,7 +134,7 @@ func (s *inventoryServer) reserve(e contracts.Envelope) (contracts.Envelope, err
 		pr, ok := s.products[item.ProductID]
 		if !ok || pr.available < item.Quantity {
 			s.processed[e.EventID] = true
-			return s.outcome(e, p.Order.CustomerID, "InventoryRejected", "OUT_OF_STOCK"), nil
+			return s.outcome(e, p.Order.CustomerID, "InventoryRejected", "OUT_OF_STOCK", 0, p.Order.Currency, p.Order.PaymentScenario), nil
 		}
 	}
 	for _, item := range p.Order.Items {
@@ -139,7 +145,7 @@ func (s *inventoryServer) reserve(e contracts.Envelope) (contracts.Envelope, err
 		s.reservations[id] = reservation{ID: id, OrderID: p.Order.ID, ProductID: item.ProductID, Quantity: item.Quantity, Status: "RESERVED", CreatedAt: time.Now().UTC()}
 	}
 	s.processed[e.EventID] = true
-	return s.outcome(e, p.Order.CustomerID, "InventoryReserved", ""), nil
+	return s.outcome(e, p.Order.CustomerID, "InventoryReserved", "", p.Order.TotalMinor, p.Order.Currency, p.Order.PaymentScenario), nil
 }
 func (s *inventoryServer) release(e contracts.Envelope) (contracts.Envelope, error) {
 	var p compensationPayload
@@ -161,10 +167,10 @@ func (s *inventoryServer) release(e contracts.Envelope) (contracts.Envelope, err
 		}
 	}
 	s.processed[e.EventID] = true
-	return s.outcome(e, p.CustomerID, "InventoryReleased", ""), nil
+	return s.outcome(e, p.CustomerID, "InventoryReleased", "", 0, "", ""), nil
 }
-func (s *inventoryServer) outcome(e contracts.Envelope, customer, eventType, reason string) contracts.Envelope {
-	b, _ := json.Marshal(compensationPayload{OrderID: e.OrderID, CustomerID: customer, Reason: reason})
+func (s *inventoryServer) outcome(e contracts.Envelope, customer, eventType, reason string, amount int64, currency, scenario string) contracts.Envelope {
+	b, _ := json.Marshal(compensationPayload{OrderID: e.OrderID, CustomerID: customer, Reason: reason, AmountMinor: amount, Currency: currency, PaymentScenario: scenario})
 	return contracts.Envelope{SchemaVersion: 1, EventID: uuid.NewString(), EventType: eventType, CorrelationID: e.CorrelationID, CausationID: e.EventID, OccurredAt: time.Now().UTC(), CustomerID: customer, OrderID: e.OrderID, Payload: b}
 }
 func (s *inventoryServer) consume(ctx context.Context, brokers string) {
