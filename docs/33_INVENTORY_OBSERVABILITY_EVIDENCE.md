@@ -94,3 +94,31 @@ go test ./services/notification-service/... ./services/activity-service/...     
 
 P1 does not claim historical V1 terminal events: existing ClickHouse rows remain unchanged and
 canonical terminal events are produced only from newly processed live outcomes.
+
+## P2 — Durable Inventory and Stock Operations
+
+**Status:** **Focused implementation complete; Compose persistence gate remains for P7.**
+
+- Inventory protobuf now exposes `ListInventory`, `AdjustStock`, and `ListStockMovements`.
+- Inventory-owned PostgreSQL schema is additive (`inventory_products`, stock movements,
+  reservations, processed events, and outbox). The Compose stack provisions an additive
+  `inventory_db`; existing databases and volumes are untouched.
+- Seed rows are insert-if-absent and never overwrite an operator adjustment. Stock uses
+  `on_hand - reserved` as the available projection, with row locking for signed adjustments
+  and event reservations. Negative available balances are rejected.
+- Adjust Stock is admin-only at both Gateway and Inventory metadata boundaries, requires an
+  Idempotency-Key, hashes the request payload, and records the movement plus `StockAdjusted`
+  outbox row transactionally.
+- Reserve, release, and consume have PostgreSQL transaction paths and durable processed-event /
+  outbox records; the existing in-memory path remains for isolated tests without a DSN.
+
+**Focused verification:**
+
+```text
+powershell -ExecutionPolicy Bypass -File scripts/test.ps1   # passed with SKIP_FRONTEND=1
+docker compose -f deploy/docker-compose.yml config --quiet # passed before/after P2 config
+```
+
+The running stack was not restarted or re-seeded during P2 to avoid mutating retained baseline
+fixtures. P7 will rebuild only service images and run a unique acceptance `run_id`, then verify
+restart persistence against the additive Inventory database.

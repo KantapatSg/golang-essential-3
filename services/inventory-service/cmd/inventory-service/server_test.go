@@ -6,6 +6,7 @@ import (
 	"github.com/KantapatSg/golang-essential-3/contracts"
 	inventoryv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/inventory/v1"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"testing"
 	"time"
@@ -64,5 +65,24 @@ func TestConfirmedConsumesReservationIdempotently(t *testing.T) {
 	}
 	if duplicate, err := s.consumeReservation(confirmed); err != nil || duplicate.EventID != "" {
 		t.Fatalf("duplicate=%v err=%v", duplicate, err)
+	}
+}
+
+func TestAdjustStockSignedAndIdempotent(t *testing.T) {
+	s := &inventoryServer{products: map[string]product{"p": {"p", "P", "USD", 10, 2}}}
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("x-user-role", "admin"))
+	first, err := s.AdjustStock(ctx, &inventoryv1.AdjustStockRequest{ProductId: "p", Delta: 3, Reason: "restock", IdempotencyKey: "stock-1"})
+	if err != nil || first.GetProduct().GetAvailable() != 5 || first.GetMovement().GetBalanceAfter() != 5 {
+		t.Fatalf("first=%v err=%v", first, err)
+	}
+	retry, err := s.AdjustStock(ctx, &inventoryv1.AdjustStockRequest{ProductId: "p", Delta: 3, Reason: "restock", IdempotencyKey: "stock-1"})
+	if err != nil || !retry.GetReplayed() || s.products["p"].available != 5 {
+		t.Fatalf("retry=%v err=%v available=%d", retry, err, s.products["p"].available)
+	}
+	if _, err := s.AdjustStock(ctx, &inventoryv1.AdjustStockRequest{ProductId: "p", Delta: 2, Reason: "different", IdempotencyKey: "stock-1"}); status.Code(err) != codes.AlreadyExists {
+		t.Fatalf("mismatch err=%v", err)
+	}
+	if _, err := s.AdjustStock(ctx, &inventoryv1.AdjustStockRequest{ProductId: "p", Delta: -6, Reason: "bad", IdempotencyKey: "stock-2"}); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("negative err=%v", err)
 	}
 }

@@ -138,6 +138,32 @@ paths:
       responses:
         '200': { description: Inventory reservation ledger, content: { application/json: { schema: { $ref: '#/components/schemas/ReservationPage' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/admin/inventory:
+    get:
+      tags: [operator]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Durable Inventory balances, content: { application/json: { schema: { $ref: '#/components/schemas/ProductPage' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/admin/inventory/adjustments:
+    post:
+      tags: [operator]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, minLength: 1 } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AdjustStockRequest' } } } }
+      responses:
+        '200': { description: Atomic signed stock adjustment, content: { application/json: { schema: { $ref: '#/components/schemas/AdjustStockResponse' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Idempotency key payload mismatch }
+  /api/v1/admin/inventory/movements:
+    get:
+      tags: [operator]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: product_id, in: query, schema: { type: string } }]
+      responses:
+        '200': { description: Durable stock movement ledger, content: { application/json: { schema: { $ref: '#/components/schemas/StockMovementPage' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /api/v1/admin/payments:
     get:
       tags: [operator]
@@ -211,7 +237,11 @@ components:
     CreateOrderItem: { type: object, required: [product_id, quantity], properties: { product_id: { type: string }, quantity: { type: integer, minimum: 1, maximum: 10000 } } }
     CreateOrderRequest: { type: object, required: [items, payment_scenario], properties: { items: { type: array, minItems: 1, items: { $ref: '#/components/schemas/CreateOrderItem' } }, payment_scenario: { type: string, enum: [success, decline] } } }
     OrderItem: { type: object, properties: { product_id: { type: string }, name: { type: string }, quantity: { type: integer }, unit_price: { $ref: '#/components/schemas/Money' }, line_total: { $ref: '#/components/schemas/Money' } } }
-    Order: { type: object, required: [id, customer_id, items, total, status], properties: { id: { type: string, format: uuid }, customer_id: { type: string, format: uuid }, items: { type: array, items: { $ref: '#/components/schemas/OrderItem' } }, total: { $ref: '#/components/schemas/Money' }, status: { type: string, enum: [PENDING, STOCK_RESERVED, CONFIRMED, CANCELLED, REJECTED] }, payment_scenario: { type: string }, reason: { type: string }, created_at: { type: string, format: date-time }, updated_at: { type: string, format: date-time } } }
+    AdjustStockRequest: { type: object, required: [product_id, delta, reason], properties: { product_id: { type: string }, delta: { type: integer }, reason: { type: string } } }
+    StockMovement: { type: object, properties: { id: { type: string, format: uuid }, product_id: { type: string }, delta: { type: integer }, reason: { type: string }, balance_after: { type: integer }, idempotency_key: { type: string }, created_at: { type: string, format: date-time } } }
+    StockMovementPage: { type: object, properties: { movements: { type: array, items: { $ref: '#/components/schemas/StockMovement' } }, total: { type: integer } } }
+    AdjustStockResponse: { type: object, properties: { product: { $ref: '#/components/schemas/Product' }, movement: { $ref: '#/components/schemas/StockMovement' }, replayed: { type: boolean } } }
+    Order: { type: object, required: [id, customer_id, items, total, status], properties: { id: { type: string, format: uuid }, customer_id: { type: string, format: uuid }, items: { type: array, items: { $ref: '#/components/schemas/OrderItem' } }, total: { $ref: '#/components/schemas/Money' }, status: { type: string, enum: [PENDING, STOCK_RESERVED, CANCELLING, CONFIRMED, CANCELLED, REJECTED] }, payment_scenario: { type: string }, reason: { type: string }, created_at: { type: string, format: date-time }, updated_at: { type: string, format: date-time } } }
     OrderPage: { type: object, required: [items, total], properties: { items: { type: array, items: { $ref: '#/components/schemas/Order' } }, total: { type: integer } } }
     Notification: { type: object, properties: { id: { type: string, format: uuid }, user_id: { type: string, format: uuid }, order_id: { type: string, format: uuid }, type: { type: string }, message: { type: string }, read: { type: boolean }, created_at: { type: string, format: date-time } } }
     NotificationPage: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/Notification' } }, total: { type: integer } } }

@@ -70,6 +70,11 @@ type orderBody struct {
 	} `json:"items"`
 	PaymentScenario string `json:"payment_scenario"`
 }
+type stockAdjustmentBody struct {
+	ProductID string `json:"product_id"`
+	Delta     int32  `json:"delta"`
+	Reason    string `json:"reason"`
+}
 
 var httpRequests atomic.Uint64
 var httpDurationNanos atomic.Uint64
@@ -180,6 +185,9 @@ func (g *gateway) routes(app *fiber.App) {
 	protected.Get("/admin/analytics/orders/funnel", g.orderFunnel)
 	protected.Get("/admin/activities/orders", g.listOrderActivities)
 	protected.Get("/admin/inventory/reservations", g.listReservations)
+	protected.Get("/admin/inventory", g.listInventory)
+	protected.Post("/admin/inventory/adjustments", g.adjustInventory)
+	protected.Get("/admin/inventory/movements", g.listStockMovements)
 	protected.Get("/admin/payments", g.listPayments)
 	app.Get("/openapi.yaml", func(c *fiber.Ctx) error { c.Type("yaml"); return c.SendString(openAPI) })
 	app.Get("/swagger/", func(c *fiber.Ctx) error {
@@ -472,6 +480,50 @@ func (g *gateway) listReservations(c *fiber.Ctx) error {
 	ctx, cancel := rpcCtx(c)
 	defer cancel()
 	r, e := g.inventory.ListReservations(ctx, &inventoryv1.ListReservationsRequest{Page: 1, PageSize: 100})
+	if e != nil {
+		return grpcHTTP(c, e)
+	}
+	return c.JSON(r)
+}
+func (g *gateway) listInventory(c *fiber.Ctx) error {
+	if e := adminOnly(c); e != nil {
+		return e
+	}
+	ctx, cancel := rpcCtx(c)
+	defer cancel()
+	r, e := g.inventory.ListInventory(withActor(ctx, c), &inventoryv1.ListInventoryRequest{Page: 1, PageSize: 100})
+	if e != nil {
+		return grpcHTTP(c, e)
+	}
+	return c.JSON(fiber.Map{"products": r.Products, "total": r.Total})
+}
+func (g *gateway) adjustInventory(c *fiber.Ctx) error {
+	if e := adminOnly(c); e != nil {
+		return e
+	}
+	key := strings.TrimSpace(c.Get("Idempotency-Key"))
+	if key == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "Idempotency-Key is required"})
+	}
+	var b stockAdjustmentBody
+	if e := c.BodyParser(&b); e != nil || strings.TrimSpace(b.ProductID) == "" || b.Delta == 0 {
+		return c.Status(400).JSON(fiber.Map{"error": "product_id and non-zero delta are required"})
+	}
+	ctx, cancel := rpcCtx(c)
+	defer cancel()
+	r, e := g.inventory.AdjustStock(withActor(ctx, c), &inventoryv1.AdjustStockRequest{ProductId: b.ProductID, Delta: b.Delta, Reason: b.Reason, IdempotencyKey: key})
+	if e != nil {
+		return grpcHTTP(c, e)
+	}
+	return c.JSON(r)
+}
+func (g *gateway) listStockMovements(c *fiber.Ctx) error {
+	if e := adminOnly(c); e != nil {
+		return e
+	}
+	ctx, cancel := rpcCtx(c)
+	defer cancel()
+	r, e := g.inventory.ListStockMovements(withActor(ctx, c), &inventoryv1.ListStockMovementsRequest{ProductId: c.Query("product_id"), Page: 1, PageSize: 100})
 	if e != nil {
 		return grpcHTTP(c, e)
 	}
