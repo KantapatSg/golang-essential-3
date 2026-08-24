@@ -53,7 +53,8 @@ try {
   }
 
   # ขอบเขต analytics ผูกกับช่วงเวลาของ run นี้ เพื่อไม่ให้ projection ที่ eventual ปะปนกับ fixture ใน volume เดิม
-  $acceptanceFrom = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+  $invariantCulture = [System.Globalization.CultureInfo]::InvariantCulture
+  $acceptanceFrom = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ', $invariantCulture)
   $success = New-Order 'prod-mug' 'success' ([guid]::NewGuid().ToString())
   if ($success.status -ne 'PENDING') { throw "order did not return PENDING: $($success.status)" }
   $successFinal = Wait-OrderTerminal $success.id
@@ -128,7 +129,7 @@ try {
   $summaryReady = $false
   for ($i = 0; $i -lt 60; $i++) {
     try {
-      $acceptanceTo = (Get-Date).ToUniversalTime().AddSeconds(5).ToString('yyyy-MM-ddTHH:mm:ssZ')
+      $acceptanceTo = (Get-Date).ToUniversalTime().AddSeconds(5).ToString('yyyy-MM-ddTHH:mm:ssZ', $invariantCulture)
       $fromQuery = [uri]::EscapeDataString($acceptanceFrom)
       $toQuery = [uri]::EscapeDataString($acceptanceTo)
       $orderSummary = Invoke-RestMethod "$base/api/v1/admin/analytics/orders/summary?from=$fromQuery&to=$toQuery" -Headers $headers
@@ -171,8 +172,16 @@ try {
 
   $rows = (& docker compose -f deploy/docker-compose.yml exec -T clickhouse clickhouse-client --query "SELECT count() FROM analytics.task_events FINAL").Trim()
   if ([int64]$rows -lt 1) { throw 'ClickHouse has no projected events' }
-  $orderRows = (& docker compose -f deploy/docker-compose.yml exec -T clickhouse clickhouse-client --query "SELECT count() FROM analytics.order_events FINAL").Trim()
-  if ([int64]$orderRows -lt 3) { throw 'ClickHouse has no projected order events' }
+  # ตรวจ V2 ด้วย run_id และ order IDs จริง พร้อมรอ worker projection แบบ eventual consistency
+  $orderIDs = "'$($success.id)','$($declined.id)','$($outOfStock.id)'"
+  $orderRows = '0'
+  $v2Ready = $false
+  for ($i = 0; $i -lt 60; $i++) {
+    $orderRows = (& docker compose -f deploy/docker-compose.yml exec -T clickhouse clickhouse-client --query "SELECT uniqExact(order_id) FROM analytics.order_events_v2 WHERE run_id = '$acceptanceRunID' AND order_id IN ($orderIDs)").Trim()
+    if ([int64]$orderRows -ge 3) { $v2Ready = $true; break }
+    Start-Sleep -Seconds 2
+  }
+  if (-not $v2Ready) { throw "ClickHouse V2 has no projected acceptance orders for run ${acceptanceRunID}: $orderRows" }
 
   if ($env:RUN_BROWSER_E2E -eq '1') {
     Push-Location frontend
