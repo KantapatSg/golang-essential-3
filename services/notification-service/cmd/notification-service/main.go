@@ -179,10 +179,6 @@ func toProtoOne(r notificationRow) *notificationv1.Notification {
 	return &notificationv1.Notification{Id: r.ID, UserId: r.UserID, OrderId: r.OrderID, Type: r.Type, Message: r.Message, Read: r.Read, CreatedAt: r.CreatedAt.Format(time.RFC3339)}
 }
 
-type eventPayload struct {
-	OrderID, CustomerID string `json:"order_id"`
-}
-
 func messageFor(event string) (string, string) {
 	switch event {
 	case "OrderCreated":
