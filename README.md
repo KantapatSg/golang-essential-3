@@ -7,6 +7,11 @@ Portfolio project สำหรับเรียนรู้ Go Microservices �
 > Local Compose acceptance ผ่าน Browser/API/Event/ClickHouse/Prometheus/Grafana และ restart
 > persistence แล้ว; public repository และ clean-clone CI ผ่านแล้ว (runs `32652675076`, `32652993690`); ยังไม่เริ่ม Render Phase 11
 
+> **Order revision (R11 verified):** เปลี่ยน business use case จาก Task เป็น Order Processing Platform
+> เพื่อให้เห็น gRPC synchronous CRUD และ Kafka asynchronous workflow ชัดขึ้น พร้อม Inventory,
+> Payment, Activity, in-app Notification และ ClickHouse Analytics ดู [Order Platform Overview](docs/26_ORDER_PLATFORM_OVERVIEW.md) และ
+> [Order Implementation Plan](docs/28_ORDER_IMPLEMENTATION_PLAN.md)
+
 ## เป้าหมายระบบ
 
 ```text
@@ -52,7 +57,35 @@ Grafana ---------------------------> ClickHouse datasource
 [Phase Context & Resume](docs/25_PHASE_CONTEXT_RESUME.md); moderate dependency advisories และ
 race test ที่ต้องใช้ CGO ถูกบันทึกเป็น follow-up ไม่ปกปิดเป็น pass
 
-## ตรวจ baseline ก่อนเริ่ม implement
+## Order Platform Revision (R11 verified; Render R12 held)
+
+Revision ใหม่จะรักษา REST Gateway เป็น public edge และใช้ gRPC สำหรับ synchronous call ภายใน
+ส่วนการสร้าง Order จะตอบ `PENDING` หลัง transaction ของ Order + Outbox แล้วให้ Kafka กระจายงาน
+ไป Inventory และ Payment แบบ asynchronous จากนั้น Activity, Notification และ Analytics จะสร้าง
+projection ของตนเองโดยไม่ block request แรก
+
+```text
+Browser -> REST Gateway -> gRPC Order -> PostgreSQL + Outbox -> PENDING
+                                      |
+                                      v
+                                    Kafka
+                   +------------------+------------------+
+                   v                  v                  v
+               Inventory          Activity         Notification
+                   |
+                   v
+                Payment -> Order final state -> ClickHouse Analytics
+
+All services -> Prometheus -> Grafana
+ClickHouse -----------------> Grafana business dashboards
+```
+
+Use cases หลักคือ happy path, out-of-stock และ payment-declined พร้อม stock compensation
+และ in-app notification ขอบเขต/API/state/event/failure behavior อยู่ใน
+[Detailed Design](docs/27_ORDER_PLATFORM_DESIGN.md) ส่วนสถานะและจุดกลับมาทำต่ออยู่ใน
+[Order Revision Handoff](docs/29_ORDER_REVISION_HANDOFF.md)
+
+## ตรวจ stable Task baseline ก่อนเริ่ม Order revision
 
 ```powershell
 make test
@@ -61,7 +94,8 @@ make build
 docker compose -f deploy/docker-compose.yml config --quiet
 ```
 
-Baseline ยังไม่ใช่ Project 3 ที่เสร็จแล้ว การทดสอบผ่านในขั้นนี้พิสูจน์เพียงว่า source ที่รับมาจาก Project 2 ยังทำงานหลัง fork
+คำสั่งนี้พิสูจน์ Task baseline ปัจจุบันเท่านั้น Order revision ใช้ R0-R11 evidence ใน
+[Order Revision Evidence](docs/30_ORDER_REVISION_EVIDENCE.md)
 
 ## คำสั่งตรวจทั้งหมด
 
@@ -90,13 +124,18 @@ Frontend อยู่ที่ `http://localhost:3000`, Gateway ที่ `http:
 | [ClickHouse Analytics](docs/13_CLICKHOUSE_ANALYTICS.md) | event เข้า analytics และ query อย่างไร |
 | [Observability](docs/14_OBSERVABILITY.md) | Prometheus และ Grafana วัดอะไร |
 | [Cost, Domain, URL](docs/15_COST_DOMAIN_URL.md) | ต้องเตรียมค่าใช้จ่ายเท่าไร |
-| [Implementation Phases](docs/16_IMPLEMENTATION_PHASES.md) | Luna High ต้องทำงานตามลำดับใด |
+| [Implementation Phases](docs/16_IMPLEMENTATION_PHASES.md) | Phase ที่ใช้สร้าง Task release เดิม (historical evidence) |
 | [Commenting Guide](docs/17_COMMENTING_GUIDE.md) | จุดใดต้องมี comment และควรอธิบายแบบไหน |
-| [Definition of Done](docs/18_DEFINITION_OF_DONE.md) | เกณฑ์ตัดสินว่า implement เสร็จจริง |
+| [Definition of Done](docs/18_DEFINITION_OF_DONE.md) | เกณฑ์ที่ Task release เดิมผ่านแล้ว |
 | [Interview Guide](docs/19_INTERVIEW_GUIDE.md) | ใช้อธิบาย architecture และ trade-off อย่างไร |
-| [Master Blueprint](docs/23_MASTER_BLUEPRINT.md) | Product overview, architecture, service flow, stack และเหตุผลทั้งหมด |
-| [Test & Acceptance Matrix](docs/24_TEST_ACCEPTANCE_MATRIX.md) | แต่ละส่วนต้องทดสอบอะไรและเก็บหลักฐานอย่างไร |
-| [Phase Context & Resume](docs/25_PHASE_CONTEXT_RESUME.md) | สถานะจริง จุดค้าง และวิธีกลับมาทำต่อเมื่อ task/token ถูกตัด |
+| [Master Blueprint](docs/23_MASTER_BLUEPRINT.md) | Architecture ของ Task release เดิม |
+| [Test & Acceptance Matrix](docs/24_TEST_ACCEPTANCE_MATRIX.md) | Test/evidence ของ Task release เดิม |
+| [Phase Context & Resume](docs/25_PHASE_CONTEXT_RESUME.md) | Evidence ledger ของ Task release และ pointer ไป Order resume |
+| [Order Platform Overview](docs/26_ORDER_PLATFORM_OVERVIEW.md) | Order use case ใหม่และ sync/async flow ทำงานอย่างไร |
+| [Order Platform Design](docs/27_ORDER_PLATFORM_DESIGN.md) | service ownership, API/gRPC/event/schema/state/failure contract คืออะไร |
+| [Order Implementation Plan](docs/28_ORDER_IMPLEMENTATION_PLAN.md) | Phase R0-R12 และ acceptance ของ Order revision |
+| [Order Revision Handoff](docs/29_ORDER_REVISION_HANDOFF.md) | สถานะ revision และ handoff/rollback rules |
+| [Order Revision Evidence](docs/30_ORDER_REVISION_EVIDENCE.md) | ผลทดสอบ R0-R11 และ known local-volume limitation |
 
 ## กติกาการส่งมอบ
 
