@@ -184,3 +184,25 @@ mutating UPDATE was introduced.
 go test ./services/analytics-service/... ./services/analytics-worker/...  # passed
 docker exec deploy-clickhouse-1 clickhouse-client ... 003_order_events_v2.sql # passed
 ```
+
+## P5 — Prometheus transaction and cache metrics
+
+**Status:** **Passed focused metric exposition checks.**
+
+- Order `/metrics` now exposes low-cardinality request, quote-error, transaction, and
+  transaction-error counters.
+- Inventory `/metrics` exposes transaction, adjustment, cache hit/miss/bypass/error/invalidation
+  counters. Labels do not contain order IDs, customer IDs, idempotency keys, or tokens.
+- Gateway already exposes bounded HTTP request and duration counters; Analytics and the worker
+  retain bounded request/query/retry/DLQ/lag metrics.
+
+**Focused verification:**
+
+```text
+go test ./services/order-service/... ./services/inventory-service/... # passed
+curl http://localhost:9106/metrics                              # service_ready + inventory counters
+curl http://localhost:9107/metrics                              # service_ready + order counters
+```
+
+The existing running images predate these counters; P7 will rebuild only application images and
+capture live exposition plus Prometheus target/series evidence.

@@ -6,12 +6,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/KantapatSg/golang-essential-3/contracts"
@@ -106,6 +108,9 @@ type orderServer struct {
 	inventory   inventoryv1.InventoryServiceClient
 	db          *gorm.DB
 }
+
+var orderRequests, orderTransactions, orderTransactionErrors, orderQuoteErrors atomic.Uint64
+
 type idem struct{ customer, hash, orderID string }
 type outcomePayload struct {
 	OrderID     string `json:"order_id"`
@@ -127,6 +132,7 @@ func actor(ctx context.Context) (string, string) {
 	return id, role
 }
 func (s *orderServer) CreateOrder(ctx context.Context, req *orderv1.CreateOrderRequest) (*orderv1.Order, error) {
+	orderRequests.Add(1)
 	if req == nil || len(req.GetItems()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "at least one item is required")
 	}
@@ -179,6 +185,7 @@ func (s *orderServer) CreateOrder(ctx context.Context, req *orderv1.CreateOrderR
 	}
 	quote, err := s.inventory.QuoteProducts(ctx, &inventoryv1.QuoteProductsRequest{Items: quoteItems})
 	if err != nil {
+		orderQuoteErrors.Add(1)
 		return nil, status.Error(codes.Unavailable, "inventory quote unavailable")
 	}
 	if len(quote.GetProducts()) != len(req.GetItems()) {
@@ -198,6 +205,7 @@ func (s *orderServer) CreateOrder(ctx context.Context, req *orderv1.CreateOrderR
 	envelope := contracts.Envelope{SchemaVersion: 1, EventID: uuid.NewString(), EventType: "OrderCreated", CorrelationID: row.ID, OrderID: row.ID, CustomerID: row.CustomerID, OccurredAt: now, Payload: b}
 	envelopeBytes, _ := json.Marshal(envelope)
 	if s.db != nil {
+		orderTransactions.Add(1)
 		// Aggregate และ outbox ต้อง commit transaction เดียวกัน; Kafka ล่มหลังจากนี้ให้ publisher retry จากแถวที่ยังค้าง
 		if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			if err := tx.Create(row).Error; err != nil {
@@ -208,6 +216,7 @@ func (s *orderServer) CreateOrder(ctx context.Context, req *orderv1.CreateOrderR
 			}
 			return tx.Create(&idemRow{Key: key, CustomerID: customer, RequestHash: hash, OrderID: row.ID, CreatedAt: now}).Error
 		}); err != nil {
+			orderTransactionErrors.Add(1)
 			return nil, status.Error(codes.Internal, "order transaction failed")
 		}
 	}
@@ -503,7 +512,7 @@ func health(ctx context.Context, addr string, db *gorm.DB) {
 	})
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-		_, _ = w.Write([]byte("# HELP service_ready Whether the service can accept traffic.\n# TYPE service_ready gauge\nservice_ready 1\n"))
+		_, _ = w.Write([]byte(fmt.Sprintf("# HELP service_ready Whether the service can accept traffic.\n# TYPE service_ready gauge\nservice_ready 1\n# TYPE order_grpc_requests_total counter\norder_grpc_requests_total %d\n# TYPE order_quote_errors_total counter\norder_quote_errors_total %d\n# TYPE order_transactions_total counter\norder_transactions_total %d\n# TYPE order_transaction_errors_total counter\norder_transaction_errors_total %d\n", orderRequests.Load(), orderQuoteErrors.Load(), orderTransactions.Load(), orderTransactionErrors.Load())))
 	})
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() { <-ctx.Done(); _ = srv.Shutdown(context.Background()) }()

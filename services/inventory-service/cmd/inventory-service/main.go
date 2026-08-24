@@ -52,6 +52,7 @@ type stockAdjustment struct {
 const catalogCacheKey = "catalog:v1:list:all"
 
 var cacheHits, cacheMisses, cacheBypasses, cacheErrors, cacheInvalidations atomic.Uint64
+var inventoryTransactions, inventoryTransactionErrors, inventoryAdjustments atomic.Uint64
 
 type reservation struct {
 	ID, OrderID, ProductID, Status, Reason string
@@ -289,6 +290,7 @@ func (s *inventoryServer) AdjustStock(ctx context.Context, req *inventoryv1.Adju
 	}
 	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("%s|%d|%s", req.GetProductId(), req.GetDelta(), req.GetReason()))))
 	var result inventoryv1.AdjustStockResponse
+	inventoryAdjustments.Add(1)
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var prior stockMovementRow
 		if err := tx.Where("idempotency_key = ?", req.GetIdempotencyKey()).First(&prior).Error; err == nil {
@@ -326,6 +328,7 @@ func (s *inventoryServer) AdjustStock(ctx context.Context, req *inventoryv1.Adju
 		return tx.Create(&inventoryOutboxRow{EventID: uuid.NewString(), EventType: "StockAdjusted", AggregateID: row.ID, Payload: fmt.Sprintf(`{"product_id":%q,"delta":%d,"balance_after":%d}`, row.ID, req.GetDelta(), movement.BalanceAfter), OccurredAt: movement.CreatedAt}).Error
 	})
 	if err != nil {
+		inventoryTransactionErrors.Add(1)
 		return nil, err
 	}
 	s.invalidateCatalog(ctx)
@@ -433,6 +436,7 @@ func (s *inventoryServer) reserve(e contracts.Envelope) (contracts.Envelope, err
 	return s.outcome(e, p.Order.CustomerID, "InventoryReserved", "", p.Order.TotalMinor, p.Order.Currency, p.Order.PaymentScenario), nil
 }
 func (s *inventoryServer) reserveDB(e contracts.Envelope, p createdPayload) (contracts.Envelope, error) {
+	inventoryTransactions.Add(1)
 	out := s.outcome(e, p.Order.CustomerID, contracts.EventInventoryReserved, "", p.Order.TotalMinor, p.Order.Currency, p.Order.PaymentScenario)
 	err := s.db.WithContext(context.Background()).Transaction(func(tx *gorm.DB) error {
 		var seen inventoryProcessedEventRow
@@ -475,6 +479,7 @@ func (s *inventoryServer) reserveDB(e contracts.Envelope, p createdPayload) (con
 		return s.createInventoryOutbox(tx, out, p.Order.ID)
 	})
 	if err != nil {
+		inventoryTransactionErrors.Add(1)
 		return contracts.Envelope{}, err
 	}
 	s.invalidateCatalog(context.Background())
@@ -513,6 +518,7 @@ func (s *inventoryServer) release(e contracts.Envelope) (contracts.Envelope, err
 	return s.outcome(e, p.CustomerID, "InventoryReleased", "", 0, "", ""), nil
 }
 func (s *inventoryServer) releaseDB(e contracts.Envelope, p compensationPayload) (contracts.Envelope, error) {
+	inventoryTransactions.Add(1)
 	out := s.outcome(e, p.CustomerID, contracts.EventInventoryReleased, "", 0, p.Currency, "")
 	err := s.db.WithContext(context.Background()).Transaction(func(tx *gorm.DB) error {
 		var seen inventoryProcessedEventRow
@@ -548,6 +554,7 @@ func (s *inventoryServer) releaseDB(e contracts.Envelope, p compensationPayload)
 		return s.createInventoryOutbox(tx, out, p.OrderID)
 	})
 	if err != nil {
+		inventoryTransactionErrors.Add(1)
 		return contracts.Envelope{}, err
 	}
 	s.invalidateCatalog(context.Background())
@@ -583,6 +590,7 @@ func (s *inventoryServer) consumeReservation(e contracts.Envelope) (contracts.En
 	return s.outcome(e, p.CustomerID, contracts.EventInventoryConsumed, "", 0, p.Currency, ""), nil
 }
 func (s *inventoryServer) consumeReservationDB(e contracts.Envelope, p compensationPayload) (contracts.Envelope, error) {
+	inventoryTransactions.Add(1)
 	out := s.outcome(e, p.CustomerID, contracts.EventInventoryConsumed, "", 0, p.Currency, "")
 	err := s.db.WithContext(context.Background()).Transaction(func(tx *gorm.DB) error {
 		var seen inventoryProcessedEventRow
@@ -619,6 +627,7 @@ func (s *inventoryServer) consumeReservationDB(e contracts.Envelope, p compensat
 		return s.createInventoryOutbox(tx, out, p.OrderID)
 	})
 	if err != nil {
+		inventoryTransactionErrors.Add(1)
 		return contracts.Envelope{}, err
 	}
 	s.invalidateCatalog(context.Background())
@@ -711,7 +720,7 @@ func health(ctx context.Context, addr string) {
 	mux.HandleFunc("/health/ready", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) })
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-		_, _ = w.Write([]byte(fmt.Sprintf("# HELP service_ready Whether the service can accept traffic.\n# TYPE service_ready gauge\nservice_ready 1\n# TYPE inventory_catalog_cache_hits_total counter\ninventory_catalog_cache_hits_total %d\n# TYPE inventory_catalog_cache_misses_total counter\ninventory_catalog_cache_misses_total %d\n# TYPE inventory_catalog_cache_bypasses_total counter\ninventory_catalog_cache_bypasses_total %d\n# TYPE inventory_catalog_cache_errors_total counter\ninventory_catalog_cache_errors_total %d\n# TYPE inventory_catalog_cache_invalidations_total counter\ninventory_catalog_cache_invalidations_total %d\n", cacheHits.Load(), cacheMisses.Load(), cacheBypasses.Load(), cacheErrors.Load(), cacheInvalidations.Load())))
+		_, _ = w.Write([]byte(fmt.Sprintf("# HELP service_ready Whether the service can accept traffic.\n# TYPE service_ready gauge\nservice_ready 1\n# TYPE inventory_catalog_cache_hits_total counter\ninventory_catalog_cache_hits_total %d\n# TYPE inventory_catalog_cache_misses_total counter\ninventory_catalog_cache_misses_total %d\n# TYPE inventory_catalog_cache_bypasses_total counter\ninventory_catalog_cache_bypasses_total %d\n# TYPE inventory_catalog_cache_errors_total counter\ninventory_catalog_cache_errors_total %d\n# TYPE inventory_catalog_cache_invalidations_total counter\ninventory_catalog_cache_invalidations_total %d\n# TYPE inventory_transactions_total counter\ninventory_transactions_total %d\n# TYPE inventory_transaction_errors_total counter\ninventory_transaction_errors_total %d\n# TYPE inventory_adjustments_total counter\ninventory_adjustments_total %d\n", cacheHits.Load(), cacheMisses.Load(), cacheBypasses.Load(), cacheErrors.Load(), cacheInvalidations.Load(), inventoryTransactions.Load(), inventoryTransactionErrors.Load(), inventoryAdjustments.Load())))
 	})
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() { <-ctx.Done(); _ = srv.Shutdown(context.Background()) }()
