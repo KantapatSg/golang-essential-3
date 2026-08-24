@@ -84,7 +84,7 @@ services:
     ports: ["127.0.0.1:50052:50052"]
   inventory-service:
     build: { context: .., dockerfile: deploy/Dockerfile, args: { SERVICE: inventory-service } }
-    environment: { INVENTORY_ADDR: ":50055", INVENTORY_HTTP_ADDR: ":9106" }
+    environment: { INVENTORY_ADDR: ":50055", INVENTORY_HTTP_ADDR: ":9106", KAFKA_BROKERS: "kafka:9092" }
     depends_on: { kafka-init: { condition: service_completed_successfully } }
     ports: ["127.0.0.1:50055:50055"]
   order-service:
