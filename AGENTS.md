@@ -8,8 +8,9 @@ Source presence is not the same as runtime verification. Read the status ledger 
 changing code so unfinished acceptance gates are not mistaken for missing features.
 
 The verified `main` / `v0.1.0-predeploy` runtime is the Task version. The Order Processing
-Platform revision is locally verified through R8 on `codex/order-platform-revision`; release
-R9-R11 is pending. Existing tag `v0.2.0-order-predeploy` is preserved as-is; never use
+Platform revision is locally verified through R10 on `codex/order-platform-revision`; commit
+`730e89f` is pushed and CI is green, with tag `v0.2.1-order-predeploy` pending. Existing tag
+`v0.2.0-order-predeploy` is preserved as-is; never use
 Task-version evidence to substantiate Order behavior.
 
 ## Source of truth

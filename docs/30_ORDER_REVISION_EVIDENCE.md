@@ -15,8 +15,8 @@ not overwritten by this revision.
 | R7 | Passed locally | Frontend lint/test/build; Playwright browser E2E 3/3 |
 | R8 | Passed locally | Compose Grafana datasource, Prometheus targets and dashboard checks |
 | R9 | Passed locally | `make test`, `make vet`, `make build`, `make compose-config`, frontend lint/test/build |
-| R10 | Passed locally | Compose acceptance exit 0; release commit still pending |
-| R11 | Pending | Push/CI/new tag after R9; no existing tag will be overwritten |
+| R10 | Passed locally and CI | Compose acceptance exit 0; CI run `32700681239` passed |
+| R11 | In progress | Commit `730e89f` pushed and CI run `32700681239` passed; no existing tag will be overwritten; tag creation is next |
 
 ## R7 browser evidence
 
@@ -64,7 +64,7 @@ idempotency, admin projections, notifications, ClickHouse order events, Grafana 
 Prometheus targets and browser E2E. The script stopped containers in `finally`; it did not remove
 named volumes or Task data.
 
-## R9 commands still required
+## R9 quality commands
 
 ```powershell
 make test
@@ -73,7 +73,7 @@ make build
 docker compose -f deploy/docker-compose.yml config --quiet
 ```
 
-These must be run after the final docs/runtime diff and recorded with the release commit SHA.
+The final runtime/docs commit is `730e89f482295cff812a54ed739fa82f209c164c`; CI run `32700681239` passed all four jobs. The pre-deploy tag is the remaining R11 action.
 
 ## Known limitations and rollback
 

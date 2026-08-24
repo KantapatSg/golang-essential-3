@@ -1,6 +1,6 @@
 # Order Platform Revision — Implementation Plan
 
-> สถานะปัจจุบัน: **R0–R8 ผ่าน local acceptance; R9–R11 release handoff pending; R12 Render hold**
+> สถานะปัจจุบัน: **R0–R10 ผ่าน local acceptance; commit `730e89f` push และ CI ผ่าน; R11 tag `v0.2.1-order-predeploy` กำลังปิด; R12 Render hold**
 >
 > แผนนี้ใช้สำหรับเปลี่ยน `golang-essential-3` จาก Task demo ไปเป็น Order Processing Platform
 > โดยรักษา `main` และ tag `v0.1.0-predeploy` เป็น baseline ที่ย้อนกลับได้ ห้ามลบ schema,
@@ -50,11 +50,11 @@
 | R4 | Payment simulation + Order saga/compensation | Passed — `ff890f9`, `89859ad`, `aae8de0` |
 | R5 | Activity + in-app Notification projections | Passed — `7eb048a` |
 | R6 | ClickHouse analytics projection และ query API | Passed — `b01ab0b`, `93a8b85` |
-| R7 | Portfolio frontend ครบ success/failure flows | Passed — local Playwright 3/3; release commit pending |
-| R8 | Prometheus, Grafana และ alerts | Passed — Compose acceptance observability checks; release commit pending |
+| R7 | Portfolio frontend ครบ success/failure flows | Passed — local และ CI Playwright 3/3 |
+| R8 | Prometheus, Grafana และ alerts | Passed — local และ CI Compose acceptance observability checks |
 | R9 | Security, failure recovery และ quality gates | Passed locally — post-draft full quality gates |
-| R10 | Full local acceptance + migration cutover readiness | Passed locally — Compose acceptance exit 0; release evidence commit pending |
-| R11 | Public GitHub, CI และ pre-deploy tag | Pending — preserve existing tags; create new release tag after CI |
+| R10 | Full local acceptance + migration cutover readiness | Passed — local และ CI Compose acceptance exit 0 |
+| R11 | Public GitHub, CI และ pre-deploy tag | In progress — commit `730e89f` และ CI ผ่าน; สร้าง tag ใหม่โดยรักษา tag เดิม |
 | R12 | Render deployment | **HOLD — ไม่ทำจนกว่าจะสั่ง** |
 
 ## 5. Phase Details

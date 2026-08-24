@@ -2,11 +2,11 @@
 
 > Updated: 2026-08-24 (Asia/Bangkok)
 >
-> สถานะ revision: **R0–R8 passed locally; R9–R11 release handoff pending; R12 Render held**
+> สถานะ revision: **R0–R10 passed locally/CI; commit `730e89f` ผ่าน CI; R11 tag กำลังปิด; R12 Render held**
 >
 > Runtime baseline: Task/Activity/Analytics บน `main`, tag `v0.1.0-predeploy`; revision runtime
-> อยู่บน branch `codex/order-platform-revision`; local Compose/browser acceptance ผ่านแล้ว แต่ยังไม่มี
-> release commit ใหม่จาก draft นี้
+> อยู่บน branch `codex/order-platform-revision`; local Compose/browser acceptance และ CI ผ่านแล้วที่
+> commit `730e89f`; เหลือสร้าง tag pre-deploy ใหม่เท่านั้น
 
 เอกสารนี้เป็นจุดกลับมาทำงานต่อเมื่อ context/token หมด และเป็น handoff prompt สำหรับ agent ที่จะ
 implement โดยต้องอ่าน docs 26-29 ทั้งชุดก่อนแก้ runtime
@@ -21,12 +21,12 @@ implement โดยต้องอ่าน docs 26-29 ทั้งชุดก�
 - กำหนด in-app Notification แบบ persisted inbox + polling
 - กำหนด phased plan, rollback policy, acceptance/evidence matrix แล้ว
 - Order-first frontend, admin projections, refresh-cookie boundary และ browser E2E ถูก implement ใน
-  uncommitted draft และผ่าน local R0–R8 acceptance ตาม docs 30
+  draft และผ่าน local/CI R0–R10 acceptance ตาม docs 30
 
 ### สิ่งที่ยังไม่ทำ / ต้องปิดก่อน release
 
-- R9 quality gate หลัง draft ล่าสุดผ่านแล้ว; ต้องผูกผลกับ release commit
-- ยังไม่ได้ commit/push draft ล่าสุดหรือสร้าง tag ใหม่ (ห้าม overwrite `v0.2.0-order-predeploy` เดิม)
+- R9/R10 quality และ full acceptance ผ่านที่ commit `730e89f`; CI run `32700681239` ผ่านครบ
+- ยังไม่ได้สร้าง tag ใหม่ (ห้าม overwrite `v0.2.0-order-predeploy` เดิม)
 - ยังไม่ deploy Render
 
 ดังนั้นห้ามใช้ภาพหรือผลทดสอบ Task version เป็นหลักฐานว่า Order revision ผ่าน
@@ -112,11 +112,11 @@ Critical invariants:
 | R4 Payment/Saga | Passed | `ff890f9`, `89859ad`, `aae8de0` | decline compensation/retry |
 | R5 Activity/Notification | Passed | `7eb048a` | persisted projections and polling |
 | R6 Analytics | Passed | `b01ab0b`, `93a8b85` | ClickHouse projection/query |
-| R7 Frontend | Passed locally | Playwright 3/3; release commit pending | commit after R9 gate |
-| R8 Observability | Passed locally | Compose Grafana/Prometheus checks | commit after R9 gate |
-| R9 Quality/Recovery | Passed locally | `make test/vet/build`, compose config, frontend gates | commit evidence SHA |
-| R10 Local acceptance | Passed locally | Compose acceptance exit 0; `task_events=13`, `order_events=79` | record final SHA |
-| R11 GitHub/tag | Pending | existing tags preserved | push + CI + new tag |
+| R7 Frontend | Passed locally/CI | Playwright 3/3 | complete |
+| R8 Observability | Passed locally/CI | Compose Grafana/Prometheus checks | complete |
+| R9 Quality/Recovery | Passed locally/CI | `make test/vet/build`, compose config, frontend gates | complete at `730e89f` |
+| R10 Local acceptance | Passed locally/CI | Compose acceptance exit 0; `task_events=13`, `order_events=79` | complete at `730e89f` |
+| R11 GitHub/tag | In progress | commit `730e89f`, CI run `32700681239` passed; existing tags preserved | create `v0.2.1-order-predeploy` |
 | R12 Render | HOLD | none | ต้องมีคำสั่งใหม่หลัง R11 |
 
 อัปเดตตารางนี้ทุกครั้งที่จบ Phase พร้อม commit SHA และลิงก์/ตำแหน่ง evidence
