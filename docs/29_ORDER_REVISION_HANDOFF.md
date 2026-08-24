@@ -2,11 +2,11 @@
 
 > Updated: 2026-08-24 (Asia/Bangkok)
 >
-> สถานะ revision: **R0–R10 passed locally/CI; commit `730e89f` ผ่าน CI; R11 tag กำลังปิด; R12 Render held**
+> สถานะ revision: **R0–R11 passed locally/CI; tag `v0.2.1-order-predeploy` created; R12 Render held**
 >
 > Runtime baseline: Task/Activity/Analytics บน `main`, tag `v0.1.0-predeploy`; revision runtime
 > อยู่บน branch `codex/order-platform-revision`; local Compose/browser acceptance และ CI ผ่านแล้วที่
-> commit `730e89f`; เหลือสร้าง tag pre-deploy ใหม่เท่านั้น
+> commit `dbb326c`; tag `v0.2.1-order-predeploy` สร้างแล้ว
 
 เอกสารนี้เป็นจุดกลับมาทำงานต่อเมื่อ context/token หมด และเป็น handoff prompt สำหรับ agent ที่จะ
 implement โดยต้องอ่าน docs 26-29 ทั้งชุดก่อนแก้ runtime
@@ -21,12 +21,12 @@ implement โดยต้องอ่าน docs 26-29 ทั้งชุดก�
 - กำหนด in-app Notification แบบ persisted inbox + polling
 - กำหนด phased plan, rollback policy, acceptance/evidence matrix แล้ว
 - Order-first frontend, admin projections, refresh-cookie boundary และ browser E2E ถูก implement ใน
-  draft และผ่าน local/CI R0–R10 acceptance ตาม docs 30
+  draft และผ่าน local/CI R0–R11 acceptance ตาม docs 30
 
 ### สิ่งที่ยังไม่ทำ / ต้องปิดก่อน release
 
-- R9/R10 quality และ full acceptance ผ่านที่ commit `730e89f`; CI run `32700681239` ผ่านครบ
-- ยังไม่ได้สร้าง tag ใหม่ (ห้าม overwrite `v0.2.0-order-predeploy` เดิม)
+- R9/R10 quality และ full acceptance ผ่านที่ commit `dbb326c`; CI run `32701188316` ผ่านครบ
+- R11 tag `v0.2.1-order-predeploy` สร้างแล้ว โดยไม่ overwrite `v0.2.0-order-predeploy` เดิม
 - ยังไม่ deploy Render
 
 ดังนั้นห้ามใช้ภาพหรือผลทดสอบ Task version เป็นหลักฐานว่า Order revision ผ่าน
@@ -114,9 +114,9 @@ Critical invariants:
 | R6 Analytics | Passed | `b01ab0b`, `93a8b85` | ClickHouse projection/query |
 | R7 Frontend | Passed locally/CI | Playwright 3/3 | complete |
 | R8 Observability | Passed locally/CI | Compose Grafana/Prometheus checks | complete |
-| R9 Quality/Recovery | Passed locally/CI | `make test/vet/build`, compose config, frontend gates | complete at `730e89f` |
-| R10 Local acceptance | Passed locally/CI | Compose acceptance exit 0; `task_events=13`, `order_events=79` | complete at `730e89f` |
-| R11 GitHub/tag | In progress | commit `730e89f`, CI run `32700681239` passed; existing tags preserved | create `v0.2.1-order-predeploy` |
+| R9 Quality/Recovery | Passed locally/CI | `make test/vet/build`, compose config, frontend gates | complete at `dbb326c` |
+| R10 Local acceptance | Passed locally/CI | Compose acceptance exit 0; `task_events=13`, `order_events=79` | complete at `dbb326c` |
+| R11 GitHub/tag | Passed | final release commit `dbb326c`, CI run `32701188316`; existing tags preserved | stop before R12 |
 | R12 Render | HOLD | none | ต้องมีคำสั่งใหม่หลัง R11 |
 
 อัปเดตตารางนี้ทุกครั้งที่จบ Phase พร้อม commit SHA และลิงก์/ตำแหน่ง evidence

@@ -16,7 +16,7 @@ not overwritten by this revision.
 | R8 | Passed locally | Compose Grafana datasource, Prometheus targets and dashboard checks |
 | R9 | Passed locally | `make test`, `make vet`, `make build`, `make compose-config`, frontend lint/test/build |
 | R10 | Passed locally and CI | Compose acceptance exit 0; CI run `32700681239` passed |
-| R11 | In progress | Commit `730e89f` pushed and CI run `32700681239` passed; no existing tag will be overwritten; tag creation is next |
+| R11 | Passed | Commit `dbb326c` pushed; CI run `32701188316` passed all four jobs; `v0.2.1-order-predeploy` created; existing tags preserved |
 
 ## R7 browser evidence
 
@@ -73,7 +73,7 @@ make build
 docker compose -f deploy/docker-compose.yml config --quiet
 ```
 
-The final runtime/docs commit is `730e89f482295cff812a54ed739fa82f209c164c`; CI run `32700681239` passed all four jobs. The pre-deploy tag is the remaining R11 action.
+The verified runtime commit is `dbb326cdf00b961dac82bf5be23ff21feabaf634`; CI run `32701188316` passed all four jobs. Tag `v0.2.1-order-predeploy` points to this commit (annotated tag object `113f1413`).
 
 ## Known limitations and rollback
 

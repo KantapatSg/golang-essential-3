@@ -2,12 +2,12 @@
 
 Portfolio project สำหรับเรียนรู้ Go Microservices แบบ end-to-end โดยต่อยอด source code จาก `golang-essential-2` และเพิ่ม Frontend, ClickHouse analytics, Prometheus metrics, Grafana dashboards และแผน deploy บน Render
 
-> สถานะปัจจุบัน: **Order-first R0–R10 ผ่าน local verification; commit `730e89f` push แล้วและ CI ผ่าน; รอ tag `v0.2.1-order-predeploy`**
+> สถานะปัจจุบัน: **Order-first R0–R11 ผ่าน local/CI verification; tag `v0.2.1-order-predeploy` สร้างแล้ว; Render ยังหยุดไว้**
 >
 > Local Compose acceptance ผ่าน Browser/API/Event/ClickHouse/Prometheus/Grafana แล้ว โดยไม่ลบ
 > volumes; ยังไม่ deploy Render
 
-> **Order revision (R0–R10 locally verified):** เปลี่ยน business use case จาก Task เป็น Order Processing Platform
+> **Order revision (R0–R11 locally/CI verified):** เปลี่ยน business use case จาก Task เป็น Order Processing Platform
 > เพื่อให้เห็น gRPC synchronous CRUD และ Kafka asynchronous workflow ชัดขึ้น พร้อม Inventory,
 > Payment, Activity, in-app Notification และ ClickHouse Analytics ดู [Order Platform Overview](docs/26_ORDER_PLATFORM_OVERVIEW.md) และ
 > [Order Implementation Plan](docs/28_ORDER_IMPLEMENTATION_PLAN.md)
@@ -57,7 +57,7 @@ Grafana ---------------------------> ClickHouse datasource
 [Phase Context & Resume](docs/25_PHASE_CONTEXT_RESUME.md); moderate dependency advisories และ
 race test ที่ต้องใช้ CGO ถูกบันทึกเป็น follow-up ไม่ปกปิดเป็น pass
 
-## Order Platform Revision (R0–R10 locally verified; CI passed; tag pending; Render held)
+## Order Platform Revision (R0–R11 locally/CI verified; pre-deploy tag created; Render held)
 
 Revision ใหม่จะรักษา REST Gateway เป็น public edge และใช้ gRPC สำหรับ synchronous call ภายใน
 ส่วนการสร้าง Order จะตอบ `PENDING` หลัง transaction ของ Order + Outbox แล้วให้ Kafka กระจายงาน
