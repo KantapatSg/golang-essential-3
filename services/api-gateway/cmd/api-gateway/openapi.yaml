@@ -116,6 +116,28 @@ paths:
       responses:
         '200': { description: Task status counts, content: { application/json: { schema: { $ref: '#/components/schemas/StatusesResponse' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/products:
+    get:
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: Product catalog } }
+  /api/v1/orders:
+    get: { security: [{ bearerAuth: [] }], responses: { '200': { description: Orders } } }
+    post:
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: Idempotency-Key, in: header, required: true, schema: { type: string } }]
+      responses: { '202': { description: Pending order }, '400': { $ref: '#/components/responses/BadRequest' } }
+  /api/v1/orders/{id}:
+    get: { security: [{ bearerAuth: [] }], responses: { '200': { description: Order }, '404': { $ref: '#/components/responses/NotFound' } } }
+  /api/v1/notifications:
+    get: { security: [{ bearerAuth: [] }], responses: { '200': { description: Notification inbox } } }
+  /api/v1/notifications/unread-count:
+    get: { security: [{ bearerAuth: [] }], responses: { '200': { description: Unread count } } }
+  /api/v1/notifications/{id}/read:
+    patch: { security: [{ bearerAuth: [] }], responses: { '200': { description: Notification marked read } } }
+  /api/v1/admin/analytics/orders/summary:
+    get: { security: [{ bearerAuth: [] }], responses: { '200': { description: Order summary } } }
+  /api/v1/admin/analytics/orders/funnel:
+    get: { security: [{ bearerAuth: [] }], responses: { '200': { description: Order funnel } } }
 components:
   securitySchemes: { bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT } }
   parameters:

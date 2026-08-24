@@ -9,9 +9,14 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	activityorder "github.com/KantapatSg/golang-essential-3/contracts/gen/go/activity/v1"
 	activityv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/activity/v1"
 	analyticsv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/analytics/v1"
 	identityv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/identity/v1"
+	inventoryv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/inventory/v1"
+	notificationv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/notification/v1"
+	orderv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/order/v1"
+	paymentv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/payment/v1"
 	taskv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/task/v1"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -34,11 +39,17 @@ import (
 )
 
 type gateway struct {
-	identity   identityv1.IdentityServiceClient
-	tasks      taskv1.TaskServiceClient
-	activities activityv1.ActivityServiceClient
-	analytics  analyticsv1.AnalyticsServiceClient
-	public     *rsa.PublicKey
+	identity       identityv1.IdentityServiceClient
+	tasks          taskv1.TaskServiceClient
+	activities     activityv1.ActivityServiceClient
+	analytics      analyticsv1.AnalyticsServiceClient
+	order          orderv1.OrderServiceClient
+	inventory      inventoryv1.InventoryServiceClient
+	notifications  notificationv1.NotificationServiceClient
+	orderActivity  activityorder.OrderActivityServiceClient
+	orderAnalytics analyticsv1.OrderAnalyticsServiceClient
+	payments       paymentv1.PaymentServiceClient
+	public         *rsa.PublicKey
 }
 type loginBody struct {
 	Email    string `json:"email"`
@@ -52,6 +63,13 @@ type taskBody struct {
 	Description string `json:"description"`
 	Status      string `json:"status"`
 }
+type orderBody struct {
+	Items []struct {
+		ProductID string `json:"product_id"`
+		Quantity  int32  `json:"quantity"`
+	} `json:"items"`
+	PaymentScenario string `json:"payment_scenario"`
+}
 
 var httpRequests atomic.Uint64
 var httpDurationNanos atomic.Uint64
@@ -61,6 +79,10 @@ func main() {
 	taskAddr := env("TASK_ADDR", "localhost:50052")
 	actAddr := env("ACTIVITY_ADDR", "localhost:50053")
 	analyticsAddr := env("ANALYTICS_ADDR", "localhost:50054")
+	orderAddr := env("ORDER_ADDR", "localhost:50056")
+	inventoryAddr := env("INVENTORY_ADDR", "localhost:50055")
+	notificationAddr := env("NOTIFICATION_ADDR", "localhost:50058")
+	paymentAddr := env("PAYMENT_ADDR", "localhost:50057")
 	// Gateway เป็น composition root: จุดนี้ประกอบ gRPC clients และ transport concerns
 	// โดยไม่ดึง business logic ของ service อื่นเข้ามาอยู่ใน public edge
 	// gRPC uses the native protobuf codec in production.  The checked-in codec remains
@@ -82,7 +104,23 @@ func main() {
 	if e != nil {
 		log.Print(e)
 	}
-	g := &gateway{identity: identityv1.NewIdentityServiceClient(idc), tasks: taskv1.NewTaskServiceClient(tc), activities: activityv1.NewActivityServiceClient(ac), analytics: analyticsv1.NewAnalyticsServiceClient(anc), public: loadPublic(env("JWT_PUBLIC_KEY_PATH", "deploy/keys/public.pem"))}
+	oc, e := grpc.Dial(orderAddr, opts...)
+	if e != nil {
+		log.Print(e)
+	}
+	ic, e := grpc.Dial(inventoryAddr, opts...)
+	if e != nil {
+		log.Print(e)
+	}
+	nc, e := grpc.Dial(notificationAddr, opts...)
+	if e != nil {
+		log.Print(e)
+	}
+	pc, e := grpc.Dial(paymentAddr, opts...)
+	if e != nil {
+		log.Print(e)
+	}
+	g := &gateway{identity: identityv1.NewIdentityServiceClient(idc), tasks: taskv1.NewTaskServiceClient(tc), activities: activityv1.NewActivityServiceClient(ac), analytics: analyticsv1.NewAnalyticsServiceClient(anc), order: orderv1.NewOrderServiceClient(oc), inventory: inventoryv1.NewInventoryServiceClient(ic), notifications: notificationv1.NewNotificationServiceClient(nc), payments: paymentv1.NewPaymentServiceClient(pc), orderActivity: activityorder.NewOrderActivityServiceClient(ac), orderAnalytics: analyticsv1.NewOrderAnalyticsServiceClient(anc), public: loadPublic(env("JWT_PUBLIC_KEY_PATH", "deploy/keys/public.pem"))}
 	app := fiber.New(fiber.Config{AppName: "golang-essential-3"})
 	app.Use(recover.New())
 	app.Use(cors.New(cors.Config{
@@ -126,10 +164,22 @@ func (g *gateway) routes(app *fiber.App) {
 	protected.Post("/tasks", g.createTask)
 	protected.Put("/tasks/:id", g.updateTask)
 	protected.Delete("/tasks/:id", g.deleteTask)
+	protected.Get("/products", g.listProducts)
+	protected.Post("/orders", g.createOrder)
+	protected.Get("/orders", g.listOrders)
+	protected.Get("/orders/:id", g.getOrder)
+	protected.Get("/notifications", g.listNotifications)
+	protected.Get("/notifications/unread-count", g.unreadNotifications)
+	protected.Patch("/notifications/:id/read", g.markNotificationRead)
+	protected.Post("/notifications/read-all", g.markAllNotificationsRead)
 	protected.Get("/activities", g.listActivities)
 	protected.Get("/analytics/summary", g.analyticsSummary)
 	protected.Get("/analytics/timeseries", g.analyticsTimeseries)
 	protected.Get("/analytics/statuses", g.analyticsStatuses)
+	protected.Get("/admin/analytics/orders/summary", g.orderSummary)
+	protected.Get("/admin/analytics/orders/funnel", g.orderFunnel)
+	protected.Get("/admin/inventory/reservations", g.listReservations)
+	protected.Get("/admin/payments", g.listPayments)
 	app.Get("/openapi.yaml", func(c *fiber.Ctx) error { c.Type("yaml"); return c.SendString(openAPI) })
 	app.Get("/swagger/", func(c *fiber.Ctx) error {
 		return c.Type("html").SendString(swaggerUIHTML)
@@ -287,6 +337,138 @@ func (g *gateway) deleteTask(c *fiber.Ctx) error {
 		return grpcHTTP(c, e)
 	}
 	return c.SendStatus(204)
+}
+func (g *gateway) listProducts(c *fiber.Ctx) error {
+	ctx, cancel := rpcCtx(c)
+	defer cancel()
+	r, e := g.inventory.ListProducts(ctx, &inventoryv1.ListProductsRequest{Page: 1, PageSize: 100})
+	if e != nil {
+		return grpcHTTP(c, e)
+	}
+	return c.JSON(fiber.Map{"products": r.Products, "total": r.Total})
+}
+func (g *gateway) createOrder(c *fiber.Ctx) error {
+	key := strings.TrimSpace(c.Get("Idempotency-Key"))
+	if key == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "Idempotency-Key is required"})
+	}
+	var b orderBody
+	if e := c.BodyParser(&b); e != nil || len(b.Items) == 0 {
+		return c.Status(400).JSON(fiber.Map{"error": "items are required"})
+	}
+	items := make([]*orderv1.CreateOrderItem, 0, len(b.Items))
+	for _, i := range b.Items {
+		items = append(items, &orderv1.CreateOrderItem{ProductId: i.ProductID, Quantity: i.Quantity})
+	}
+	ctx, cancel := rpcCtx(c)
+	defer cancel()
+	r, e := g.order.CreateOrder(withActor(ctx, c), &orderv1.CreateOrderRequest{CustomerId: c.Locals("user_id").(string), Items: items, PaymentScenario: b.PaymentScenario, IdempotencyKey: key})
+	if e != nil {
+		return grpcHTTP(c, e)
+	}
+	return c.Status(202).JSON(r)
+}
+func (g *gateway) listOrders(c *fiber.Ctx) error {
+	ctx, cancel := rpcCtx(c)
+	defer cancel()
+	r, e := g.order.ListOrders(withActor(ctx, c), &orderv1.ListOrdersRequest{Page: 1, PageSize: 100})
+	if e != nil {
+		return grpcHTTP(c, e)
+	}
+	return c.JSON(fiber.Map{"items": r.Orders, "total": r.Total})
+}
+func (g *gateway) getOrder(c *fiber.Ctx) error {
+	ctx, cancel := rpcCtx(c)
+	defer cancel()
+	r, e := g.order.GetOrder(withActor(ctx, c), &orderv1.GetOrderRequest{Id: c.Params("id")})
+	if e != nil {
+		return grpcHTTP(c, e)
+	}
+	return c.JSON(r)
+}
+func (g *gateway) listNotifications(c *fiber.Ctx) error {
+	ctx, cancel := rpcCtx(c)
+	defer cancel()
+	r, e := g.notifications.ListNotifications(withActor(ctx, c), &notificationv1.ListNotificationsRequest{Page: 1, PageSize: 100})
+	if e != nil {
+		return grpcHTTP(c, e)
+	}
+	return c.JSON(fiber.Map{"items": r.Notifications, "total": r.Total})
+}
+func (g *gateway) unreadNotifications(c *fiber.Ctx) error {
+	ctx, cancel := rpcCtx(c)
+	defer cancel()
+	r, e := g.notifications.UnreadCount(withActor(ctx, c), &notificationv1.UnreadCountRequest{})
+	if e != nil {
+		return grpcHTTP(c, e)
+	}
+	return c.JSON(r)
+}
+func (g *gateway) markNotificationRead(c *fiber.Ctx) error {
+	ctx, cancel := rpcCtx(c)
+	defer cancel()
+	r, e := g.notifications.MarkAsRead(withActor(ctx, c), &notificationv1.MarkAsReadRequest{Id: c.Params("id")})
+	if e != nil {
+		return grpcHTTP(c, e)
+	}
+	return c.JSON(r)
+}
+func (g *gateway) markAllNotificationsRead(c *fiber.Ctx) error {
+	ctx, cancel := rpcCtx(c)
+	defer cancel()
+	_, e := g.notifications.MarkAllAsRead(withActor(ctx, c), &notificationv1.MarkAllAsReadRequest{})
+	if e != nil {
+		return grpcHTTP(c, e)
+	}
+	return c.SendStatus(204)
+}
+func (g *gateway) orderSummary(c *fiber.Ctx) error {
+	if e := adminOnly(c); e != nil {
+		return e
+	}
+	ctx, cancel := rpcCtx(c)
+	defer cancel()
+	r, e := g.orderAnalytics.OrderSummary(ctx, &analyticsv1.OrderSummaryRequest{From: c.Query("from"), To: c.Query("to")})
+	if e != nil {
+		return grpcHTTP(c, e)
+	}
+	return c.JSON(r)
+}
+func (g *gateway) orderFunnel(c *fiber.Ctx) error {
+	if e := adminOnly(c); e != nil {
+		return e
+	}
+	ctx, cancel := rpcCtx(c)
+	defer cancel()
+	r, e := g.orderAnalytics.OrderFunnel(ctx, &analyticsv1.OrderSummaryRequest{From: c.Query("from"), To: c.Query("to")})
+	if e != nil {
+		return grpcHTTP(c, e)
+	}
+	return c.JSON(r)
+}
+func (g *gateway) listReservations(c *fiber.Ctx) error {
+	if e := adminOnly(c); e != nil {
+		return e
+	}
+	ctx, cancel := rpcCtx(c)
+	defer cancel()
+	r, e := g.inventory.ListReservations(ctx, &inventoryv1.ListReservationsRequest{Page: 1, PageSize: 100})
+	if e != nil {
+		return grpcHTTP(c, e)
+	}
+	return c.JSON(r)
+}
+func (g *gateway) listPayments(c *fiber.Ctx) error {
+	if e := adminOnly(c); e != nil {
+		return e
+	}
+	ctx, cancel := rpcCtx(c)
+	defer cancel()
+	r, e := g.payments.ListPayments(ctx, &paymentv1.ListPaymentsRequest{Page: 1, PageSize: 100})
+	if e != nil {
+		return grpcHTTP(c, e)
+	}
+	return c.JSON(r)
 }
 func (g *gateway) listActivities(c *fiber.Ctx) error {
 	// Activity log เป็นข้อมูลรวมของระบบ จึงจำกัดให้ admin แม้ JWT จะผ่านแล้ว

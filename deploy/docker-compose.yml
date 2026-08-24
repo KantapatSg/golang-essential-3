@@ -145,12 +145,20 @@ services:
       TASK_ADDR: "task-service:50052"
       ACTIVITY_ADDR: "activity-service:50053"
       ANALYTICS_ADDR: "analytics-service:50054"
+      ORDER_ADDR: "order-service:50056"
+      INVENTORY_ADDR: "inventory-service:50055"
+      PAYMENT_ADDR: "payment-service:50057"
+      NOTIFICATION_ADDR: "notification-service:50058"
       JWT_PUBLIC_KEY_PATH: /keys/public.pem
     volumes: [ keys:/keys:ro ]
     depends_on:
       identity-service: { condition: service_started }
       task-service: { condition: service_started }
       activity-service: { condition: service_started }
+      order-service: { condition: service_started }
+      inventory-service: { condition: service_started }
+      payment-service: { condition: service_started }
+      notification-service: { condition: service_started }
     ports: ["8080:8080"]
   frontend:
     build: { context: .., dockerfile: deploy/frontend.Dockerfile }
