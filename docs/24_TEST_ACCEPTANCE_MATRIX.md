@@ -1,5 +1,9 @@
 # Test and Acceptance Matrix
 
+> **Historical Task-version matrix:** หลักฐานชุดนี้รองรับ `v0.1.0-predeploy`
+> Order revision ใช้ OR-* matrix ใน
+> [28_ORDER_IMPLEMENTATION_PLAN.md](28_ORDER_IMPLEMENTATION_PLAN.md)
+
 เอกสารนี้บอกว่า “แต่ละส่วนต้องทดสอบอะไร” เพื่อไม่ใช้คำว่าเสร็จจากการ build ผ่านเพียงอย่างเดียว
 รหัส test ใช้อ้างใน PR/commit และ status ledger ได้
 

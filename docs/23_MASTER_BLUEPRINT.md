@@ -1,5 +1,12 @@
 # Project 3 Master Blueprint
 
+> **Verified Task-version blueprint:** เอกสารนี้อธิบาย runtime ที่ tag
+> `v0.1.0-predeploy` ส่วน Order Processing Platform รุ่นถัดไปยังเป็น Planned และใช้
+> [26_ORDER_PLATFORM_OVERVIEW.md](26_ORDER_PLATFORM_OVERVIEW.md),
+> [27_ORDER_PLATFORM_DESIGN.md](27_ORDER_PLATFORM_DESIGN.md),
+> [28_ORDER_IMPLEMENTATION_PLAN.md](28_ORDER_IMPLEMENTATION_PLAN.md) และ
+> [29_ORDER_REVISION_HANDOFF.md](29_ORDER_REVISION_HANDOFF.md) เป็น source-of-truth
+
 เอกสารนี้คือภาพรวมทางเทคนิคฉบับหลักสำหรับ `golang-essential-3` และเป็น contract
 ระหว่าง Design กับ Luna High ผู้ implement คำว่า **Design ready 100%** หมายถึง scope,
 boundary, flow, trade-off, test และ stop condition ถูกตัดสินใจครบ ไม่ได้หมายความว่า

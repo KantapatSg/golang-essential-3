@@ -1,5 +1,9 @@
 # Definition of Done
 
+> **Verified Task-version gate:** checklist นี้ใช้ปิด release `v0.1.0-predeploy`
+> สำหรับ Order revision ให้ใช้ Definition of Complete และ matrix ใน
+> [28_ORDER_IMPLEMENTATION_PLAN.md](28_ORDER_IMPLEMENTATION_PLAN.md)
+
 Project 3 จะเรียกว่า “เสร็จ” เมื่อโค้ด เอกสาร การทดสอบ และการสาธิตสอดคล้องกัน ไม่ใช่เพียง container start ได้
 
 Design package พร้อม 100% ไม่ทำให้ checkbox ด้านล่างผ่านโดยอัตโนมัติ ทุก `[x]` ต้องอ้าง

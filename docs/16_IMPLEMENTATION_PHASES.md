@@ -1,5 +1,10 @@
 # Luna High Implementation Phases
 
+> **Historical Task-version plan:** Phase 0-10 ของเอกสารนี้จบแล้วที่
+> `v0.1.0-predeploy` และเก็บไว้เป็น evidence/rollback baseline สำหรับ Order Platform revision
+> ให้ใช้ [28_ORDER_IMPLEMENTATION_PLAN.md](28_ORDER_IMPLEMENTATION_PLAN.md) เป็นลำดับ implement ใหม่
+> และ [29_ORDER_REVISION_HANDOFF.md](29_ORDER_REVISION_HANDOFF.md) เป็นจุด resume ล่าสุด
+
 > Design status: **100% implementation-ready**
 >
 > Runtime status: **G1–G9 ผ่าน local evidence และ GitHub CI; Phase 10 complete ที่ `v0.1.0-predeploy`** — ใช้

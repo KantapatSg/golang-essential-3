@@ -1,5 +1,10 @@
 # Phase Context and Resume Ledger
 
+> **Revision update — 2026-08-24:** Task release เดิมยัง Verified ที่
+> `v0.1.0-predeploy` ส่วน Order Processing Platform ออกแบบเสร็จแล้วแต่ยังไม่ได้ implement
+> จุดเริ่มงานใหม่ย้ายไป [29_ORDER_REVISION_HANDOFF.md](29_ORDER_REVISION_HANDOFF.md) และใช้
+> [28_ORDER_IMPLEMENTATION_PLAN.md](28_ORDER_IMPLEMENTATION_PLAN.md) เป็น phase ledger ใหม่
+
 ไฟล์นี้เป็น checkpoint สำหรับกลับมาทำงานต่อเมื่อ Codex limit/token หมดหรือเปลี่ยน agent
 ให้อัปเดตทุกครั้งที่ phase เปลี่ยนสถานะหรือมีหลักฐาน runtime ใหม่ ห้ามเปลี่ยน `Pending` เป็น
 `Verified` เพียงเพราะมี source file
@@ -96,9 +101,10 @@ Race suite in CGO-enabled runner
 Render deployment
 ```
 
-## Exact Resume Point
+## Historical Exact Resume Point (Completed)
 
-Luna High ให้เริ่มจากลำดับนี้เท่านั้น:
+รายการด้านล่างคือจุด resume ที่ใช้ปิด Task version จนถึง `v0.1.0-predeploy` และทำครบแล้ว
+เก็บไว้เป็นหลักฐานย้อนหลัง ไม่ใช่จุดเริ่ม Order revision:
 
 1. อ่าน `git status`, `git diff` และสาม uncommitted runtime fix; ห้าม discard
 2. อ่าน G1–G9 ใน `23_MASTER_BLUEPRINT.md`
@@ -110,6 +116,12 @@ Luna High ให้เริ่มจากลำดับนี้เท่า�
 8. อัปเดต `16_IMPLEMENTATION_PHASES.md`, `18_DEFINITION_OF_DONE.md` และไฟล์นี้
 9. Commit แบบ phase-scoped แล้วทำ Phase 10 GitHub
 10. Phase 10 complete (`v0.1.0-predeploy`); หยุดก่อน Phase 11
+
+## Current Resume Point — Order Revision
+
+สำหรับงานใหม่ให้เริ่ม R0 จากหัวข้อ **Exact Resume Point** ใน
+[29_ORDER_REVISION_HANDOFF.md](29_ORDER_REVISION_HANDOFF.md) ห้ามข้ามไปแก้ runtime ก่อนตรวจ
+baseline, dirty files, Docker/disk และ rollback tag ตามลำดับที่ระบุ
 
 ## Bounded Debug Rule
 
@@ -137,6 +149,7 @@ Luna High ให้เริ่มจากลำดับนี้เท่า�
 
 ## Hold Point
 
-เมื่อ Phase 10 ผ่าน ให้สรุป service topology, test evidence, public repository URL,
-environment-variable names, estimated monthly/interview cost และ rollback plan แล้วหยุดรอ
-คำสั่งผู้ใช้ ห้ามสร้าง paid Render/provider resource, ผูก domain หรือใส่บัตรอัตโนมัติ
+Task version หยุดหลัง Phase 10 แล้ว สำหรับ Order revision ให้ทำ R0-R11 และหยุดก่อน R12
+พร้อมสรุป service topology, test evidence, public repository URL, environment-variable names,
+estimated monthly/interview cost และ rollback plan ห้ามสร้าง paid Render/provider resource,
+ผูก domain หรือใส่บัตรอัตโนมัติ
