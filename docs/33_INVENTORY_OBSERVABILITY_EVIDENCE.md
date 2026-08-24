@@ -267,6 +267,10 @@ Prometheus active targets: 10; healthy targets: 10
   `OrderCreated`, `InventoryReserved`, `PaymentCompleted`, `OrderConfirmed`, and
   `InventoryConsumed` with that run ID. No historical Payment rows were converted to terminal
   events.
+- Compose acceptance now generates a unique `compose-accept-*` `RUN_ID`, captures an RFC3339
+  acceptance window, and polls the ranged V2 Order Summary for up to 120 seconds until all three
+  terminal outcomes reconcile. This fixes the reproduced CI race where the first summary read
+  arrived before the ClickHouse worker projection; it does not lower the outcome thresholds.
 - Live service metrics exposed `service_ready 1`, Inventory cache/transaction counters, and Order
   transaction counters. Prometheus reported all 10 configured targets healthy; Grafana health was
   `{"database":"ok","version":"11.5.2"...}`.
@@ -274,6 +278,7 @@ Prometheus active targets: 10; healthy targets: 10
 **Browser evidence:**
 
 ```text
+SKIP_BUILD=1 ./scripts/compose-acceptance.ps1                         # passed; unique run ID/window
 PLAYWRIGHT_BASE_URL=http://localhost:3000 E2E_REAL_BACKEND=1 npm run e2e
 3 passed (landing/login, member success/decline/out-of-stock/notifications,
 admin operations navigation)

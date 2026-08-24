@@ -8,6 +8,8 @@ function Invoke-Compose([string]$arguments) {
 }
 
 try {
+  $acceptanceRunID = "compose-accept-$([guid]::NewGuid().ToString('N'))"
+  $env:RUN_ID = $acceptanceRunID
   $upCommand = if ($env:SKIP_BUILD -eq '1') { 'up -d' } else { 'up --build -d' }
   Invoke-Compose $upCommand
   $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
@@ -50,6 +52,8 @@ try {
     throw "order $id did not reach a terminal state"
   }
 
+  # ขอบเขต analytics ผูกกับช่วงเวลาของ run นี้ เพื่อไม่ให้ projection ที่ eventual ปะปนกับ fixture ใน volume เดิม
+  $acceptanceFrom = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
   $success = New-Order 'prod-mug' 'success' ([guid]::NewGuid().ToString())
   if ($success.status -ne 'PENDING') { throw "order did not return PENDING: $($success.status)" }
   $successFinal = Wait-OrderTerminal $success.id
@@ -120,9 +124,23 @@ try {
   }
   if (-not $analyticsReady) { throw 'analytics projection did not become visible' }
 
-  $orderSummary = Invoke-RestMethod "$base/api/v1/admin/analytics/orders/summary" -Headers $headers
-  if ($orderSummary.created -lt 3 -or $orderSummary.confirmed -lt 1 -or $orderSummary.cancelled -lt 1 -or $orderSummary.rejected -lt 1) {
-    throw 'order analytics summary did not include all acceptance outcomes'
+  $orderSummary = $null
+  $summaryReady = $false
+  for ($i = 0; $i -lt 60; $i++) {
+    try {
+      $acceptanceTo = (Get-Date).ToUniversalTime().AddSeconds(5).ToString('yyyy-MM-ddTHH:mm:ssZ')
+      $fromQuery = [uri]::EscapeDataString($acceptanceFrom)
+      $toQuery = [uri]::EscapeDataString($acceptanceTo)
+      $orderSummary = Invoke-RestMethod "$base/api/v1/admin/analytics/orders/summary?from=$fromQuery&to=$toQuery" -Headers $headers
+      if ($orderSummary.created -ge 3 -and $orderSummary.confirmed -ge 1 -and $orderSummary.cancelled -ge 1 -and $orderSummary.rejected -ge 1) {
+        $summaryReady = $true
+        break
+      }
+    } catch { }
+    Start-Sleep -Seconds 2
+  }
+  if (-not $summaryReady) {
+    throw "order analytics summary did not reconcile run ${acceptanceRunID}: $($orderSummary | ConvertTo-Json -Compress)"
   }
 
   $adminOrders = Invoke-RestMethod "$base/api/v1/orders?page=1&page_size=100" -Headers $headers
@@ -167,7 +185,7 @@ try {
       Pop-Location
     }
   }
-  Write-Host "compose acceptance ok task_events=$rows order_events=$orderRows success=$($success.id) decline=$($declined.id) out_of_stock=$($outOfStock.id)"
+  Write-Host "compose acceptance ok run_id=$acceptanceRunID task_events=$rows order_events=$orderRows success=$($success.id) decline=$($declined.id) out_of_stock=$($outOfStock.id)"
 } catch {
   Write-Host 'compose acceptance failed; collecting focused diagnostics'
   & docker compose -f deploy/docker-compose.yml ps
