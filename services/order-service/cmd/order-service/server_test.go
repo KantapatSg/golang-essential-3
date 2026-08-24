@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"github.com/KantapatSg/golang-essential-3/contracts"
 	inventoryv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/inventory/v1"
 	orderv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/order/v1"
 	"google.golang.org/grpc"
@@ -9,6 +11,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"testing"
+	"time"
 )
 
 type inventoryStub struct {
@@ -52,5 +55,15 @@ func TestCreateOrderIsPendingAndIdempotent(t *testing.T) {
 	b, e := s.CreateOrder(ctx, req)
 	if e != nil || b.GetId() != a.GetId() || inv.calls != 1 {
 		t.Fatalf("retry=%v err=%v calls=%d", b, e, inv.calls)
+	}
+}
+
+func TestPaymentFailureTransitionsAndRequestsRelease(t *testing.T) {
+	s := &orderServer{orders: map[string]*orderRow{"o1": {ID: "o1", CustomerID: "u1", Status: "STOCK_RESERVED"}}, idempotency: map[string]idem{}}
+	b, _ := json.Marshal(outcomePayload{OrderID: "o1", CustomerID: "u1", Reason: "PAYMENT_DECLINED"})
+	e := contracts.Envelope{SchemaVersion: 1, EventID: "evt", EventType: "PaymentFailed", CorrelationID: "o1", OrderID: "o1", OccurredAt: time.Now().UTC(), Payload: b}
+	out, err := s.applyOutcome(context.Background(), e)
+	if err != nil || out.EventType != "InventoryReleaseRequested" || s.orders["o1"].Status != "CANCELLED" {
+		t.Fatalf("out=%v err=%v order=%+v", out, err, s.orders["o1"])
 	}
 }

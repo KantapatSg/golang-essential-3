@@ -17,6 +17,7 @@ import (
 	"github.com/KantapatSg/golang-essential-3/contracts"
 	inventoryv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/inventory/v1"
 	orderv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/order/v1"
+	"github.com/KantapatSg/golang-essential-3/services/order-service/internal/state"
 	"github.com/google/uuid"
 	"github.com/segmentio/kafka-go"
 	"google.golang.org/grpc"
@@ -65,10 +66,11 @@ type idemRow struct {
 	CreatedAt   time.Time
 }
 
-func (orderRow) TableName() string { return "orders" }
-func (itemRow) TableName() string { return "order_items" }
+func (orderRow) TableName() string  { return "orders" }
+func (itemRow) TableName() string   { return "order_items" }
 func (outboxRow) TableName() string { return "order_outbox" }
-func (idemRow) TableName() string { return "order_idempotency" }
+func (idemRow) TableName() string   { return "order_idempotency" }
+
 type eventPayload struct {
 	Order orderPayload `json:"order"`
 }
@@ -97,6 +99,13 @@ type orderServer struct {
 	db          *gorm.DB
 }
 type idem struct{ customer, hash, orderID string }
+type outcomePayload struct {
+	OrderID     string `json:"order_id"`
+	CustomerID  string `json:"customer_id"`
+	Reason      string `json:"reason"`
+	AmountMinor int64  `json:"amount_minor"`
+	Currency    string `json:"currency"`
+}
 
 func actor(ctx context.Context) (string, string) {
 	md, _ := metadata.FromIncomingContext(ctx)
@@ -326,6 +335,85 @@ func (s *orderServer) publishOutbox(ctx context.Context, brokers string) {
 		}
 	}
 }
+func (s *orderServer) applyOutcome(ctx context.Context, e contracts.Envelope) (contracts.Envelope, error) {
+	var p outcomePayload
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		return contracts.Envelope{}, err
+	}
+	if p.OrderID == "" {
+		p.OrderID = e.OrderID
+	}
+	if s.db != nil {
+		var row orderRow
+		if err := s.db.WithContext(ctx).First(&row, "id = ?", p.OrderID).Error; err != nil {
+			return contracts.Envelope{}, err
+		}
+		next, err := state.Transition(row.Status, e.EventType)
+		if err != nil || next == row.Status {
+			return contracts.Envelope{}, err
+		}
+		if err := s.db.WithContext(ctx).Model(&orderRow{}).Where("id = ?", p.OrderID).Updates(map[string]interface{}{"status": next, "reason": p.Reason, "updated_at": time.Now().UTC()}).Error; err != nil {
+			return contracts.Envelope{}, err
+		}
+	} else {
+		s.mu.Lock()
+		row := s.orders[p.OrderID]
+		if row == nil {
+			s.mu.Unlock()
+			return contracts.Envelope{}, nil
+		}
+		next, err := state.Transition(row.Status, e.EventType)
+		if err != nil || next == row.Status {
+			s.mu.Unlock()
+			return contracts.Envelope{}, err
+		}
+		row.Status, row.Reason, row.UpdatedAt = next, p.Reason, time.Now().UTC()
+		s.mu.Unlock()
+	}
+	if e.EventType == "PaymentFailed" {
+		// Payment decline เป็น terminal state; คำสั่ง release เป็น compensation ที่ส่งซ้ำได้
+		payload, _ := json.Marshal(outcomePayload{OrderID: p.OrderID, CustomerID: p.CustomerID, Reason: p.Reason})
+		return contracts.Envelope{SchemaVersion: 1, EventID: uuid.NewString(), EventType: "InventoryReleaseRequested", CorrelationID: e.CorrelationID, CausationID: e.EventID, OccurredAt: time.Now().UTC(), CustomerID: p.CustomerID, OrderID: p.OrderID, Payload: payload}, nil
+	}
+	return contracts.Envelope{}, nil
+}
+func (s *orderServer) consumeOutcomes(ctx context.Context, brokers string) {
+	if brokers == "" {
+		return
+	}
+	reader := kafka.NewReader(kafka.ReaderConfig{Brokers: strings.Split(brokers, ","), Topic: contracts.OrderEventsTopic, GroupID: "order-state-v1", MinBytes: 1, MaxBytes: 1 << 20})
+	defer reader.Close()
+	writer := &kafka.Writer{Addr: kafka.TCP(strings.Split(brokers, ",")...), Topic: contracts.OrderEventsTopic}
+	defer writer.Close()
+	processed := map[string]bool{}
+	for {
+		m, err := reader.ReadMessage(ctx)
+		if err != nil {
+			return
+		}
+		var e contracts.Envelope
+		if json.Unmarshal(m.Value, &e) != nil || e.Validate() != nil {
+			continue
+		}
+		if e.EventType != "InventoryReserved" && e.EventType != "InventoryRejected" && e.EventType != "PaymentCompleted" && e.EventType != "PaymentFailed" {
+			continue
+		}
+		if processed[e.EventID] {
+			continue
+		}
+		out, err := s.applyOutcome(ctx, e)
+		if err != nil {
+			continue
+		}
+		processed[e.EventID] = true
+		if out.EventID != "" {
+			b, _ := json.Marshal(out)
+			if err := writer.WriteMessages(ctx, kafka.Message{Key: []byte(out.EventID), Value: b}); err != nil {
+				log.Printf("release publish retry event=%s: %v", out.EventID, err)
+			}
+		}
+	}
+}
 func openDB(ctx context.Context, dsn string) (*gorm.DB, error) {
 	for i := 0; i < 10; i++ {
 		db, e := gorm.Open(postgres.Open(dsn), &gorm.Config{})
@@ -393,6 +481,7 @@ func main() {
 	}
 	health(ctx, env("ORDER_HTTP_ADDR", ":9107"), s.db)
 	go s.publishOutbox(ctx, os.Getenv("KAFKA_BROKERS"))
+	go s.consumeOutcomes(ctx, os.Getenv("KAFKA_BROKERS"))
 	g := grpc.NewServer(grpc.UnaryInterceptor(deadlineInterceptor))
 	orderv1.RegisterOrderServiceServer(g, s)
 	log.Printf("order-service listening on %s", lis.Addr())
