@@ -1,9 +1,10 @@
 # Order Platform Revision — Detailed Design
 
-> สถานะ: **Planned / implementation contract**
+> สถานะ: **Implemented contract; local R0–R8 evidence recorded**
 >
 > เอกสารนี้กำหนด ownership, invariants, API/event contracts และ failure behavior สำหรับ revision
-> จาก Task domain ไป Order domain ไม่ใช่หลักฐานว่า source/runtime ปัจจุบันมี feature เหล่านี้แล้ว
+> จาก Task domain ไป Order domain; runtime/release status ให้อ้าง ledger ใน
+> [Order Revision Evidence](30_ORDER_REVISION_EVIDENCE.md)
 
 ## 1. Architecture Principles
 

@@ -44,6 +44,14 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - name: Install browser acceptance dependencies
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
       - name: Compose acceptance
         shell: pwsh
+        env: { RUN_BROWSER_E2E: '1' }
         run: ./scripts/compose-acceptance.ps1

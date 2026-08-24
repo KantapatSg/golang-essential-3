@@ -1,10 +1,10 @@
 # Order Platform Revision — System Overview
 
-> สถานะ: **Planned / ยังไม่ implement**
+> สถานะ: **R0–R8 implement และ local acceptance ผ่าน; R9–R11 release handoff ยัง pending**
 >
-> Runtime บน `main` และ tag `v0.1.0-predeploy` ยังเป็น Task/Activity/Analytics version เดิม
-> เอกสารนี้เป็นเป้าหมายของ revision รุ่นถัดไป ห้ามอ้างว่า Order flow ผ่านจนกว่าจะมี evidence
-> ตาม [Implementation Plan](28_ORDER_IMPLEMENTATION_PLAN.md)
+> Runtime บน `main` และ tag `v0.1.0-predeploy` ยังคงเป็น Task/Activity/Analytics baseline เดิม
+> ส่วน Order runtime อยู่บน revision branch และมี evidence local ใน
+> [Order Revision Evidence](30_ORDER_REVISION_EVIDENCE.md)
 
 ## 1. เป้าหมาย
 

@@ -1,6 +1,6 @@
 # Order Platform Revision — Implementation Plan
 
-> สถานะ: **R0-R11 ผ่าน; R12 Render ถูก hold ตาม scope**
+> สถานะปัจจุบัน: **R0–R8 ผ่าน local acceptance; R9–R11 release handoff pending; R12 Render hold**
 >
 > แผนนี้ใช้สำหรับเปลี่ยน `golang-essential-3` จาก Task demo ไปเป็น Order Processing Platform
 > โดยรักษา `main` และ tag `v0.1.0-predeploy` เป็น baseline ที่ย้อนกลับได้ ห้ามลบ schema,
@@ -50,11 +50,11 @@
 | R4 | Payment simulation + Order saga/compensation | Passed — `ff890f9`, `89859ad`, `aae8de0` |
 | R5 | Activity + in-app Notification projections | Passed — `7eb048a` |
 | R6 | ClickHouse analytics projection และ query API | Passed — `b01ab0b`, `93a8b85` |
-| R7 | Portfolio frontend ครบ success/failure flows | Passed — `94bdd30`, `264b1d9` |
-| R8 | Prometheus, Grafana และ alerts | Passed — `2349ea4` |
-| R9 | Security, failure recovery และ quality gates | Passed — `8ee2e2b` |
-| R10 | Full local acceptance + migration cutover readiness | Passed — `1304c6b` |
-| R11 | Public GitHub, CI และ pre-deploy tag | Passed — CI run `32694549379`, tag `v0.2.0-order-predeploy` |
+| R7 | Portfolio frontend ครบ success/failure flows | Passed — local Playwright 3/3; release commit pending |
+| R8 | Prometheus, Grafana และ alerts | Passed — Compose acceptance observability checks; release commit pending |
+| R9 | Security, failure recovery และ quality gates | Passed locally — post-draft full quality gates |
+| R10 | Full local acceptance + migration cutover readiness | Passed locally — Compose acceptance exit 0; release evidence commit pending |
+| R11 | Public GitHub, CI และ pre-deploy tag | Pending — preserve existing tags; create new release tag after CI |
 | R12 | Render deployment | **HOLD — ไม่ทำจนกว่าจะสั่ง** |
 
 ## 5. Phase Details
@@ -474,7 +474,7 @@ Task ไป Order หรือยัง
 - push revision ไป public GitHub repository ที่ผู้ใช้กำหนด
 - CI ทุก required job เป็น green บน commit เดียวกับ local evidence
 - README/demo screenshots/architecture diagrams และ interview notes ตาม runtime จริง
-- tag `v0.2.0-order-predeploy` หลัง CI ผ่าน
+- tag ใหม่ `v0.2.1-order-predeploy` หลัง CI ผ่าน; ห้าม overwrite existing `v0.2.0-order-predeploy`
 - pre-deploy manifest: commit/tag/images/env inventory/migration order/rollback
 
 **Acceptance**
@@ -546,5 +546,6 @@ Git status:
 
 ## 9. Definition of Complete for Revision
 
-Revision ถือว่า complete เฉพาะเมื่อ R0-R11 ผ่านตาม evidence และ tag
-`v0.2.0-order-predeploy` ถูกสร้างแล้ว จากนั้นต้อง **หยุดก่อน R12**
+Revision รุ่นนี้ถือว่า release-ready เมื่อ R0-R11 ผ่านตาม evidence และ tag
+`v0.2.1-order-predeploy` ถูกสร้างแล้ว โดยรักษา `v0.2.0-order-predeploy` เดิม จากนั้นต้อง
+**หยุดก่อน R12**

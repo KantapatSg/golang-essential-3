@@ -2,12 +2,12 @@
 
 Portfolio project สำหรับเรียนรู้ Go Microservices แบบ end-to-end โดยต่อยอด source code จาก `golang-essential-2` และเพิ่ม Frontend, ClickHouse analytics, Prometheus metrics, Grafana dashboards และแผน deploy บน Render
 
-> สถานะปัจจุบัน: **G1–G9 ผ่าน local verification + GitHub CI; Phase 10 complete ที่ `v0.1.0-predeploy`**
+> สถานะปัจจุบัน: **Order-first R0–R8 ผ่าน local verification; release R9–R11 ยังรอ commit/CI/tag**
 >
-> Local Compose acceptance ผ่าน Browser/API/Event/ClickHouse/Prometheus/Grafana และ restart
-> persistence แล้ว; public repository และ clean-clone CI ผ่านแล้ว (runs `32652675076`, `32652993690`); ยังไม่เริ่ม Render Phase 11
+> Local Compose acceptance ผ่าน Browser/API/Event/ClickHouse/Prometheus/Grafana แล้ว โดยไม่ลบ
+> volumes; ยังไม่สร้าง release commit ใหม่หรือ deploy Render
 
-> **Order revision (R11 verified):** เปลี่ยน business use case จาก Task เป็น Order Processing Platform
+> **Order revision (R0–R8 locally verified):** เปลี่ยน business use case จาก Task เป็น Order Processing Platform
 > เพื่อให้เห็น gRPC synchronous CRUD และ Kafka asynchronous workflow ชัดขึ้น พร้อม Inventory,
 > Payment, Activity, in-app Notification และ ClickHouse Analytics ดู [Order Platform Overview](docs/26_ORDER_PLATFORM_OVERVIEW.md) และ
 > [Order Implementation Plan](docs/28_ORDER_IMPLEMENTATION_PLAN.md)
@@ -46,7 +46,7 @@ Grafana ---------------------------> ClickHouse datasource
 
 ## สิ่งที่ Project 3 เพิ่มแล้ว (local)
 
-- React + TypeScript frontend สำหรับ Login, Task Board, Activity และ Analytics
+- React + TypeScript frontend สำหรับ Order Relay: Login, Catalog, Orders, Notifications และ Admin operations
 - Analytics API/Worker และ ClickHouse schema
 - Prometheus metrics, health/readiness endpoints และ Grafana dashboards
 - Frontend unit/component/E2E tests
@@ -57,7 +57,7 @@ Grafana ---------------------------> ClickHouse datasource
 [Phase Context & Resume](docs/25_PHASE_CONTEXT_RESUME.md); moderate dependency advisories และ
 race test ที่ต้องใช้ CGO ถูกบันทึกเป็น follow-up ไม่ปกปิดเป็น pass
 
-## Order Platform Revision (R11 verified; Render R12 held)
+## Order Platform Revision (R0–R8 locally verified; release/tag pending; Render held)
 
 Revision ใหม่จะรักษา REST Gateway เป็น public edge และใช้ gRPC สำหรับ synchronous call ภายใน
 ส่วนการสร้าง Order จะตอบ `PENDING` หลัง transaction ของ Order + Outbox แล้วให้ Kafka กระจายงาน
@@ -94,7 +94,7 @@ make build
 docker compose -f deploy/docker-compose.yml config --quiet
 ```
 
-คำสั่งนี้พิสูจน์ Task baseline ปัจจุบันเท่านั้น Order revision ใช้ R0-R11 evidence ใน
+คำสั่งนี้พิสูจน์ Task baseline ปัจจุบันเท่านั้น Order revision ใช้ R0-R8 evidence ใน
 [Order Revision Evidence](docs/30_ORDER_REVISION_EVIDENCE.md)
 
 ## คำสั่งตรวจทั้งหมด
@@ -135,7 +135,7 @@ Frontend อยู่ที่ `http://localhost:3000`, Gateway ที่ `http:
 | [Order Platform Design](docs/27_ORDER_PLATFORM_DESIGN.md) | service ownership, API/gRPC/event/schema/state/failure contract คืออะไร |
 | [Order Implementation Plan](docs/28_ORDER_IMPLEMENTATION_PLAN.md) | Phase R0-R12 และ acceptance ของ Order revision |
 | [Order Revision Handoff](docs/29_ORDER_REVISION_HANDOFF.md) | สถานะ revision และ handoff/rollback rules |
-| [Order Revision Evidence](docs/30_ORDER_REVISION_EVIDENCE.md) | ผลทดสอบ R0-R11 และ known local-volume limitation |
+| [Order Revision Evidence](docs/30_ORDER_REVISION_EVIDENCE.md) | ผลทดสอบ R0-R8 และ release handoff evidence |
 
 ## กติกาการส่งมอบ
 

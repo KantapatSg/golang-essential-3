@@ -1,11 +1,18 @@
 openapi: 3.0.3
 info:
-  title: golang-essential-3 API
-  version: 1.0.0
-  description: Public REST edge for the Signal Ledger portfolio.
+  title: Order Relay API
+  version: 2.0.0
+  description: REST edge for the Order Management portfolio. Internal service calls use gRPC and asynchronous workflow events use Kafka.
 servers:
   - url: /
-tags: [{ name: health }, { name: auth }, { name: tasks }, { name: activity }, { name: analytics }]
+tags:
+  - { name: health }
+  - { name: auth }
+  - { name: catalog }
+  - { name: orders }
+  - { name: notifications }
+  - { name: operator }
+  - { name: legacy, description: Task-version compatibility endpoints retained for rollback and study }
 paths:
   /health/live:
     get:
@@ -19,8 +26,10 @@ paths:
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /healthz:
     get:
+      deprecated: true
       tags: [health]
-      responses: { '307': { description: Backward-compatible redirect to live health } }
+      responses: { '307': { description: Compatibility redirect to liveness } }
+
   /api/v1/auth/login:
     post:
       tags: [auth]
@@ -39,129 +48,180 @@ paths:
   /api/v1/auth/logout:
     post:
       tags: [auth]
-      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/RefreshRequest' } } } }
       responses:
         '204': { description: Refresh session revoked and cookie cleared }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
-  /api/v1/tasks:
+
+  /api/v1/products:
     get:
-      tags: [tasks]
+      tags: [catalog]
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/PageSize' }]
       responses:
-        '200': { description: Paginated tasks, content: { application/json: { schema: { $ref: '#/components/schemas/TaskPage' } } } }
+        '200': { description: Inventory-owned product catalog, content: { application/json: { schema: { $ref: '#/components/schemas/ProductPage' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/orders:
+    get:
+      tags: [orders]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/PageSize' }]
+      responses:
+        '200': { description: Member-owned orders or all orders for an administrator, content: { application/json: { schema: { $ref: '#/components/schemas/OrderPage' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
     post:
-      tags: [tasks]
+      tags: [orders]
       security: [{ bearerAuth: [] }]
-      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateTaskRequest' } } } }
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, minLength: 1 } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateOrderRequest' } } } }
       responses:
-        '201': { description: Task created, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
+        '202': { description: Order transaction committed; asynchronous workflow begins from PENDING, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-  /api/v1/tasks/{id}:
-    parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+        '409': { description: Idempotency key was reused with a different request }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /api/v1/orders/{id}:
+    parameters: [{ $ref: '#/components/parameters/OrderID' }]
     get:
-      tags: [tasks]
+      tags: [orders]
       security: [{ bearerAuth: [] }]
       responses:
-        '200': { description: Task, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-    put:
-      tags: [tasks]
-      security: [{ bearerAuth: [] }]
-      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/UpdateTaskRequest' } } } }
-      responses:
-        '200': { description: Task updated, content: { application/json: { schema: { $ref: '#/components/schemas/Task' } } } }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-    delete:
-      tags: [tasks]
-      security: [{ bearerAuth: [] }]
-      responses:
-        '204': { description: Task deleted }
+        '200': { description: Current transactional Order state, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
   /api/v1/activities:
     get:
-      tags: [activity]
+      tags: [orders]
       security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: order_id, in: query, schema: { type: string, format: uuid }, description: Required for member Order timeline queries }
       responses:
-        '200': { description: Admin activity timeline, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Activity' } } } } }
+        '200': { description: Eventual activity projection for an Order, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/OrderActivity' } } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
-  /api/v1/analytics/summary:
-    get:
-      tags: [analytics]
-      security: [{ bearerAuth: [] }]
-      parameters: [{ $ref: '#/components/parameters/From' }, { $ref: '#/components/parameters/To' }, { $ref: '#/components/parameters/Limit' }]
-      responses:
-        '200': { description: Event summary, content: { application/json: { schema: { $ref: '#/components/schemas/AnalyticsSummary' } } } }
-        '403': { $ref: '#/components/responses/Forbidden' }
-  /api/v1/analytics/timeseries:
-    get:
-      tags: [analytics]
-      security: [{ bearerAuth: [] }]
-      parameters: [{ $ref: '#/components/parameters/From' }, { $ref: '#/components/parameters/To' }, { $ref: '#/components/parameters/Limit' }]
-      responses:
-        '200': { description: Daily event counts, content: { application/json: { schema: { $ref: '#/components/schemas/TimeseriesResponse' } } } }
-        '403': { $ref: '#/components/responses/Forbidden' }
-  /api/v1/analytics/statuses:
-    get:
-      tags: [analytics]
-      security: [{ bearerAuth: [] }]
-      parameters: [{ $ref: '#/components/parameters/From' }, { $ref: '#/components/parameters/To' }, { $ref: '#/components/parameters/Limit' }]
-      responses:
-        '200': { description: Task status counts, content: { application/json: { schema: { $ref: '#/components/schemas/StatusesResponse' } } } }
-        '403': { $ref: '#/components/responses/Forbidden' }
-  /api/v1/products:
-    get:
-      security: [{ bearerAuth: [] }]
-      responses: { '200': { description: Product catalog } }
-  /api/v1/orders:
-    get: { security: [{ bearerAuth: [] }], responses: { '200': { description: Orders } } }
-    post:
-      security: [{ bearerAuth: [] }]
-      parameters: [{ name: Idempotency-Key, in: header, required: true, schema: { type: string } }]
-      responses: { '202': { description: Pending order }, '400': { $ref: '#/components/responses/BadRequest' } }
-  /api/v1/orders/{id}:
-    get: { security: [{ bearerAuth: [] }], responses: { '200': { description: Order }, '404': { $ref: '#/components/responses/NotFound' } } }
+
   /api/v1/notifications:
-    get: { security: [{ bearerAuth: [] }], responses: { '200': { description: Notification inbox } } }
+    get:
+      tags: [notifications]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Persisted in-app notification inbox, content: { application/json: { schema: { $ref: '#/components/schemas/NotificationPage' } } } }
   /api/v1/notifications/unread-count:
-    get: { security: [{ bearerAuth: [] }], responses: { '200': { description: Unread count } } }
+    get:
+      tags: [notifications]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Unread count, content: { application/json: { schema: { type: object, required: [count], properties: { count: { type: integer, minimum: 0 } } } } } }
   /api/v1/notifications/{id}/read:
-    patch: { security: [{ bearerAuth: [] }], responses: { '200': { description: Notification marked read } } }
+    parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+    patch:
+      tags: [notifications]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Notification marked as read, content: { application/json: { schema: { $ref: '#/components/schemas/Notification' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/notifications/read-all:
+    post:
+      tags: [notifications]
+      security: [{ bearerAuth: [] }]
+      responses: { '204': { description: All visible notifications marked as read } }
+
+  /api/v1/admin/activities/orders:
+    get:
+      tags: [operator]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: System-wide Order event audit projection, content: { application/json: { schema: { $ref: '#/components/schemas/OrderActivityPage' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/admin/inventory/reservations:
+    get:
+      tags: [operator]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Inventory reservation ledger, content: { application/json: { schema: { $ref: '#/components/schemas/ReservationPage' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/admin/payments:
+    get:
+      tags: [operator]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Deterministic payment attempts, content: { application/json: { schema: { $ref: '#/components/schemas/PaymentPage' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /api/v1/admin/analytics/orders/summary:
-    get: { security: [{ bearerAuth: [] }], responses: { '200': { description: Order summary } } }
+    get:
+      tags: [operator]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/From' }, { $ref: '#/components/parameters/To' }]
+      responses:
+        '200': { description: ClickHouse Order outcome summary, content: { application/json: { schema: { $ref: '#/components/schemas/OrderSummary' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /api/v1/admin/analytics/orders/funnel:
-    get: { security: [{ bearerAuth: [] }], responses: { '200': { description: Order funnel } } }
+    get:
+      tags: [operator]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/From' }, { $ref: '#/components/parameters/To' }]
+      responses:
+        '200': { description: ClickHouse Order event funnel, content: { application/json: { schema: { $ref: '#/components/schemas/OrderFunnel' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/tasks:
+    get:
+      deprecated: true
+      tags: [legacy]
+      security: [{ bearerAuth: [] }]
+      responses: { '200': { description: Legacy Task page, content: { application/json: { schema: { $ref: '#/components/schemas/TaskPage' } } } } }
+    post:
+      deprecated: true
+      tags: [legacy]
+      security: [{ bearerAuth: [] }]
+      responses: { '201': { description: Legacy Task created } }
+  /api/v1/tasks/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+    get: { deprecated: true, tags: [legacy], security: [{ bearerAuth: [] }], responses: { '200': { description: Legacy Task } } }
+    put: { deprecated: true, tags: [legacy], security: [{ bearerAuth: [] }], responses: { '200': { description: Legacy Task updated } } }
+    delete: { deprecated: true, tags: [legacy], security: [{ bearerAuth: [] }], responses: { '204': { description: Legacy Task deleted } } }
+  /api/v1/analytics/summary:
+    get: { deprecated: true, tags: [legacy], security: [{ bearerAuth: [] }], responses: { '200': { description: Legacy Task analytics summary } } }
+  /api/v1/analytics/timeseries:
+    get: { deprecated: true, tags: [legacy], security: [{ bearerAuth: [] }], responses: { '200': { description: Legacy Task analytics timeseries } } }
+  /api/v1/analytics/statuses:
+    get: { deprecated: true, tags: [legacy], security: [{ bearerAuth: [] }], responses: { '200': { description: Legacy Task status counts } } }
+
 components:
-  securitySchemes: { bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT } }
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
   parameters:
     Page: { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
     PageSize: { name: page_size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
     From: { name: from, in: query, schema: { type: string, format: date-time } }
     To: { name: to, in: query, schema: { type: string, format: date-time } }
-    Limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+    OrderID: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
   responses:
     BadRequest: { description: Invalid request, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     Unauthorized: { description: Authentication required, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     Forbidden: { description: Role or ownership policy denied, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
     NotFound: { description: Resource not found, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
-    ServiceUnavailable: { description: Dependency unavailable, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    ServiceUnavailable: { description: Required dependency unavailable, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
   schemas:
     Error: { type: object, required: [error], properties: { error: { type: string } } }
     LoginRequest: { type: object, required: [email, password], properties: { email: { type: string, format: email }, password: { type: string, format: password } } }
     RefreshRequest: { type: object, properties: { refresh_token: { type: string } } }
-    TokenResponse: { type: object, required: [access_token, token_type, expires_in, user_id, role], properties: { access_token: { type: string }, refresh_token: { type: string }, token_type: { type: string, example: Bearer }, expires_in: { type: integer }, user_id: { type: string, format: uuid }, role: { type: string, enum: [admin, member] } } }
-    CreateTaskRequest: { type: object, required: [title], properties: { title: { type: string, maxLength: 200 }, description: { type: string } } }
-    UpdateTaskRequest: { type: object, required: [title, status], properties: { title: { type: string, maxLength: 200 }, description: { type: string }, status: { type: string, enum: [todo, doing, done] } } }
-    Task: { type: object, properties: { id: { type: string, format: uuid }, owner_id: { type: string, format: uuid }, title: { type: string }, description: { type: string }, status: { type: string }, created_at: { type: string, format: date-time }, updated_at: { type: string, format: date-time } } }
-    TaskPage: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/Task' } }, page: { type: integer }, page_size: { type: integer }, total: { type: integer } } }
-    Activity: { type: object, properties: { id: { type: string, format: uuid }, event_id: { type: string, format: uuid }, event_type: { type: string }, task_id: { type: string, format: uuid }, actor_id: { type: string, format: uuid }, occurred_at: { type: string, format: date-time } } }
-    AnalyticsSummary: { type: object, properties: { total_events: { type: integer }, created: { type: integer }, updated: { type: integer }, deleted: { type: integer }, generated_at: { type: string, format: date-time }, data_through: { type: string, format: date-time } } }
-    TimeseriesResponse: { type: object, properties: { points: { type: array, items: { type: object, properties: { day: { type: string }, created: { type: integer }, updated: { type: integer }, deleted: { type: integer } } } }, generated_at: { type: string, format: date-time }, data_through: { type: string, format: date-time } } }
-    StatusesResponse: { type: object, properties: { statuses: { type: array, items: { type: object, properties: { status: { type: string }, count: { type: integer } } } }, generated_at: { type: string, format: date-time }, data_through: { type: string, format: date-time } } }
+    TokenResponse: { type: object, required: [access_token, token_type, expires_in, user_id, role], properties: { access_token: { type: string }, refresh_token: { type: string }, token_type: { type: string }, expires_in: { type: integer }, user_id: { type: string, format: uuid }, role: { type: string, enum: [admin, member] } } }
+    Money: { type: object, required: [amount_minor, currency], properties: { amount_minor: { type: integer, format: int64 }, currency: { type: string, minLength: 3, maxLength: 3 } } }
+    Product: { type: object, required: [id, name, unit_price_minor, currency, available], properties: { id: { type: string }, name: { type: string }, unit_price_minor: { type: integer, format: int64 }, currency: { type: string }, available: { type: integer } } }
+    ProductPage: { type: object, required: [products, total], properties: { products: { type: array, items: { $ref: '#/components/schemas/Product' } }, total: { type: integer } } }
+    CreateOrderItem: { type: object, required: [product_id, quantity], properties: { product_id: { type: string }, quantity: { type: integer, minimum: 1, maximum: 10000 } } }
+    CreateOrderRequest: { type: object, required: [items, payment_scenario], properties: { items: { type: array, minItems: 1, items: { $ref: '#/components/schemas/CreateOrderItem' } }, payment_scenario: { type: string, enum: [success, decline] } } }
+    OrderItem: { type: object, properties: { product_id: { type: string }, name: { type: string }, quantity: { type: integer }, unit_price: { $ref: '#/components/schemas/Money' }, line_total: { $ref: '#/components/schemas/Money' } } }
+    Order: { type: object, required: [id, customer_id, items, total, status], properties: { id: { type: string, format: uuid }, customer_id: { type: string, format: uuid }, items: { type: array, items: { $ref: '#/components/schemas/OrderItem' } }, total: { $ref: '#/components/schemas/Money' }, status: { type: string, enum: [PENDING, STOCK_RESERVED, CONFIRMED, CANCELLED, REJECTED] }, payment_scenario: { type: string }, reason: { type: string }, created_at: { type: string, format: date-time }, updated_at: { type: string, format: date-time } } }
+    OrderPage: { type: object, required: [items, total], properties: { items: { type: array, items: { $ref: '#/components/schemas/Order' } }, total: { type: integer } } }
+    Notification: { type: object, properties: { id: { type: string, format: uuid }, user_id: { type: string, format: uuid }, order_id: { type: string, format: uuid }, type: { type: string }, message: { type: string }, read: { type: boolean }, created_at: { type: string, format: date-time } } }
+    NotificationPage: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/Notification' } }, total: { type: integer } } }
+    OrderActivity: { type: object, properties: { id: { type: string, format: uuid }, order_id: { type: string, format: uuid }, event_type: { type: string }, reason: { type: string }, occurred_at: { type: string, format: date-time } } }
+    OrderActivityPage: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/OrderActivity' } }, total: { type: integer } } }
+    Reservation: { type: object, properties: { id: { type: string }, order_id: { type: string }, product_id: { type: string }, quantity: { type: integer }, status: { type: string }, reason: { type: string }, created_at: { type: string, format: date-time } } }
+    ReservationPage: { type: object, properties: { reservations: { type: array, items: { $ref: '#/components/schemas/Reservation' } }, total: { type: integer } } }
+    Payment: { type: object, properties: { id: { type: string }, order_id: { type: string }, status: { type: string }, amount_minor: { type: integer, format: int64 }, currency: { type: string }, reason: { type: string }, created_at: { type: string, format: date-time } } }
+    PaymentPage: { type: object, properties: { payments: { type: array, items: { $ref: '#/components/schemas/Payment' } }, total: { type: integer } } }
+    OrderSummary: { type: object, properties: { created: { type: integer }, confirmed: { type: integer }, rejected: { type: integer }, cancelled: { type: integer }, revenue_minor: { type: integer, format: int64 }, currency: { type: string }, through: { type: string, format: date-time } } }
+    OrderFunnel: { type: object, properties: { created: { type: integer }, reserved: { type: integer }, paid: { type: integer }, confirmed: { type: integer }, rejected: { type: integer }, cancelled: { type: integer }, through: { type: string, format: date-time } } }
+    Task: { type: object, properties: { id: { type: string }, owner_id: { type: string }, title: { type: string }, description: { type: string }, status: { type: string }, created_at: { type: string }, updated_at: { type: string } } }
+    TaskPage: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/Task' } }, total: { type: integer } } }

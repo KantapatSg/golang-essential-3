@@ -133,7 +133,10 @@ func (s *activityServer) ListOrderActivities(ctx context.Context, req *activityv
 	orderID := req.GetOrderId()
 	if s.db != nil {
 		var rows []activityRow
-		q := s.db.WithContext(ctx).Where("task_id = ?", orderID)
+		q := s.db.WithContext(ctx)
+		if orderID != "" {
+			q = q.Where("task_id = ?", orderID)
+		}
 		if role != "admin" {
 			q = q.Where("actor_id = ?", actor)
 		}
@@ -150,7 +153,7 @@ func (s *activityServer) ListOrderActivities(ctx context.Context, req *activityv
 	defer s.mu.RUnlock()
 	out := []*activityv1.OrderActivity{}
 	for _, r := range s.items {
-		if r.TaskID != orderID || (role != "admin" && r.ActorID != actor) {
+		if (orderID != "" && r.TaskID != orderID) || (role != "admin" && r.ActorID != actor) {
 			continue
 		}
 		out = append(out, &activityv1.OrderActivity{Id: r.ID, OrderId: r.TaskID, EventType: r.EventType, OccurredAt: r.OccurredAt.Format(time.RFC3339)})

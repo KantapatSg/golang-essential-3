@@ -2,10 +2,11 @@
 
 > Updated: 2026-08-24 (Asia/Bangkok)
 >
-> สถานะ revision: **R0-R11 passed; R12 Render held**
+> สถานะ revision: **R0–R8 passed locally; R9–R11 release handoff pending; R12 Render held**
 >
 > Runtime baseline: Task/Activity/Analytics บน `main`, tag `v0.1.0-predeploy`; revision runtime
-> อยู่บน branch `codex/order-platform-revision` และผ่าน local R10 acceptance แล้ว
+> อยู่บน branch `codex/order-platform-revision`; local Compose/browser acceptance ผ่านแล้ว แต่ยังไม่มี
+> release commit ใหม่จาก draft นี้
 
 เอกสารนี้เป็นจุดกลับมาทำงานต่อเมื่อ context/token หมด และเป็น handoff prompt สำหรับ agent ที่จะ
 implement โดยต้องอ่าน docs 26-29 ทั้งชุดก่อนแก้ runtime
@@ -19,14 +20,13 @@ implement โดยต้องอ่าน docs 26-29 ทั้งชุดก�
 - สรุป sync gRPC flow, async Kafka flow, CQRS/cache, ClickHouse และ observability แล้ว
 - กำหนด in-app Notification แบบ persisted inbox + polling
 - กำหนด phased plan, rollback policy, acceptance/evidence matrix แล้ว
+- Order-first frontend, admin projections, refresh-cookie boundary และ browser E2E ถูก implement ใน
+  uncommitted draft และผ่าน local R0–R8 acceptance ตาม docs 30
 
-### สิ่งที่ยังไม่ทำ ณ ตอนออกแบบ (historical)
+### สิ่งที่ยังไม่ทำ / ต้องปิดก่อน release
 
-- ยังไม่มี Order/Inventory/Payment/Notification runtime code
-- ยังไม่มี Order protobuf, REST endpoints, DB migrations หรือ Kafka events ใน source
-- frontend ปัจจุบันยังเป็น Task UI
-- dashboard ปัจจุบันยังอิง Task metrics/events
-- ยังไม่สร้าง `v0.2.0-order-predeploy`
+- R9 quality gate หลัง draft ล่าสุดผ่านแล้ว; ต้องผูกผลกับ release commit
+- ยังไม่ได้ commit/push draft ล่าสุดหรือสร้าง tag ใหม่ (ห้าม overwrite `v0.2.0-order-predeploy` เดิม)
 - ยังไม่ deploy Render
 
 ดังนั้นห้ามใช้ภาพหรือผลทดสอบ Task version เป็นหลักฐานว่า Order revision ผ่าน
@@ -112,11 +112,11 @@ Critical invariants:
 | R4 Payment/Saga | Passed | `ff890f9`, `89859ad`, `aae8de0` | decline compensation/retry |
 | R5 Activity/Notification | Passed | `7eb048a` | persisted projections and polling |
 | R6 Analytics | Passed | `b01ab0b`, `93a8b85` | ClickHouse projection/query |
-| R7 Frontend | Passed | `94bdd30`, `264b1d9` | portfolio order/notification flows |
-| R8 Observability | Passed | `2349ea4` | Prometheus/Grafana targets/alerts |
-| R9 Quality/Recovery | Passed | `8ee2e2b` | test/vet/build and recovery checks |
-| R10 Local acceptance | Passed | `1304c6b` | Compose acceptance exit 0 |
-| R11 GitHub/tag | Passed | CI run `32694549379`; tag `v0.2.0-order-predeploy` | stop before R12 |
+| R7 Frontend | Passed locally | Playwright 3/3; release commit pending | commit after R9 gate |
+| R8 Observability | Passed locally | Compose Grafana/Prometheus checks | commit after R9 gate |
+| R9 Quality/Recovery | Passed locally | `make test/vet/build`, compose config, frontend gates | commit evidence SHA |
+| R10 Local acceptance | Passed locally | Compose acceptance exit 0; `task_events=13`, `order_events=79` | record final SHA |
+| R11 GitHub/tag | Pending | existing tags preserved | push + CI + new tag |
 | R12 Render | HOLD | none | ต้องมีคำสั่งใหม่หลัง R11 |
 
 อัปเดตตารางนี้ทุกครั้งที่จบ Phase พร้อม commit SHA และลิงก์/ตำแหน่ง evidence
@@ -125,13 +125,12 @@ Critical invariants:
 
 รอบ implement ถัดไปให้เริ่มตรงนี้ตามลำดับ:
 
-1. อ่าน `AGENTS.md`, docs 26-29 และตรวจ `git status --short --branch`
-2. ตรวจ docs revision; หากยังไม่ commit ให้รักษางานไว้และห้าม discard
-3. ตรวจ remote/tag `v0.1.0-predeploy` และ Task baseline tests ตาม R0
-4. ตรวจ Docker/disk แบบ read-only; ห้าม prune/delete volume โดยอัตโนมัติ
-5. บันทึก R0 evidence และสร้าง branch `codex/order-platform-revision`
-6. เริ่ม R1 ที่ contract/schema แบบ additive เท่านั้น
-7. ทำ focused tests และอัปเดต ledger ก่อนขยับ Phase
+1. ตรวจ `git status --short --branch` และ review uncommitted draft ทุกไฟล์
+2. รักษา `main`, `v0.1.0-predeploy` และ existing `v0.2.0-order-predeploy` โดยห้าม reset/retag
+3. รัน R9 quality/recovery checks หลังแก้ refresh-cookie boundary
+4. อัปเดต evidence ให้ผูกกับ commit SHA เดียว
+5. commit/push, ตรวจ CI และสร้าง tag ใหม่ที่ไม่ทับ tag เดิม
+6. หยุดก่อน Render R12
 
 ถ้า R0 พบ baseline test fail ให้ diagnose และแยกให้ได้ว่าเป็น pre-existing หรือเกิดจาก revision
 ก่อนแก้ ห้ามข้ามไป R1 ด้วย assumption
@@ -223,7 +222,8 @@ uncommitted work, do not delete Task data/volumes automatically, and do not
 leave uncommitted runtime fixes.
 
 After R10 full local acceptance passes, push to the public GitHub repository,
-verify CI, create tag v0.2.0-order-predeploy, update all status/evidence docs,
+verify CI, create tag v0.2.1-order-predeploy without overwriting existing v0.2.0-order-predeploy,
+update all status/evidence docs,
 then stop before R12 Render deployment and report the exact deploy handoff.
 ```
 

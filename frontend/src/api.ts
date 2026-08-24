@@ -1,9 +1,24 @@
-import type { Activity, AnalyticsSummary, StatusCount, Task, TimeseriesPoint, TokenResponse, Product, Order, Notification } from './types'
+import type {
+  AnalyticsSummary,
+  Notification,
+  Order,
+  OrderActivity,
+  OrderFunnel,
+  OrderSummary,
+  Payment,
+  Product,
+  Reservation,
+  StatusCount,
+  Task,
+  TimeseriesPoint,
+  TokenResponse,
+} from './types'
 
 let accessToken: string | null = null
-// ใช้ relative URL ใน local Compose เพื่อให้ Nginx ทำ same-origin proxy และใช้
-// VITE_API_BASE_URL ใน Render Static Site ที่อยู่คนละ origin กับ Gateway
+
+// Compose ใช้ same-origin proxy ส่วน Render สามารถกำหนด Gateway คนละ origin ผ่าน build-time env ได้
 const apiBaseURL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
+
 export const setAccessToken = (token: string | null) => { accessToken = token }
 export const getAccessToken = () => accessToken
 
@@ -11,31 +26,90 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
   headers.set('Content-Type', 'application/json')
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
-  const response = await fetch(`${apiBaseURL}${path}`, { ...init, headers, credentials: 'include' })
-  if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.error || `Request failed (${response.status})`) }
+
+  const response = await fetch(`${apiBaseURL}${path}`, {
+    ...init,
+    headers,
+    credentials: 'include',
+  })
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { error?: string }
+    throw new Error(body.error || `Request failed (${response.status})`)
+  }
   if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
 }
+
+function list<T>(items: T[] | null | undefined): T[] {
+  return items ?? []
+}
+
 export const api = {
-  login: (email: string, password: string) => request<TokenResponse>('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
-  refresh: () => request<TokenResponse>('/api/v1/auth/refresh', { method: 'POST', body: JSON.stringify({}) }),
-  logout: () => request<void>('/api/v1/auth/logout', { method: 'POST', body: JSON.stringify({}) }),
-  tasks: () => request<{ items: Task[] }>('/api/v1/tasks?page=1&page_size=100'),
-  task: (id: string) => request<Task>(`/api/v1/tasks/${id}`),
-  createTask: (payload: Pick<Task, 'title' | 'description'>) => request<Task>('/api/v1/tasks', { method: 'POST', body: JSON.stringify(payload) }),
-  updateTask: (id: string, payload: Pick<Task, 'title' | 'description' | 'status'>) => request<Task>(`/api/v1/tasks/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
-  deleteTask: (id: string) => request<void>(`/api/v1/tasks/${id}`, { method: 'DELETE' }),
-  activities: () => request<Activity[]>('/api/v1/activities'),
-  analyticsSummary: () => request<AnalyticsSummary>('/api/v1/analytics/summary'),
-  analyticsTimeseries: () => request<{ points: TimeseriesPoint[]; generated_at: string; data_through: string }>('/api/v1/analytics/timeseries'),
-  analyticsStatuses: () => request<{ statuses: StatusCount[]; generated_at: string; data_through: string }>('/api/v1/analytics/statuses'),
-  gatewayHealth: () => request<{ status: string }>('/health/ready'),
-  products: () => request<{ products: Product[]; total: number }>('/api/v1/products?page=1&page_size=100'),
-  orders: () => request<{ items: Order[]; total: number }>('/api/v1/orders?page=1&page_size=100'),
+  login: (email: string, password: string) =>
+    request<TokenResponse>('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
+  refresh: () =>
+    request<TokenResponse>('/api/v1/auth/refresh', { method: 'POST', body: JSON.stringify({}) }),
+  logout: () =>
+    request<void>('/api/v1/auth/logout', { method: 'POST', body: JSON.stringify({}) }),
+
+  products: async () => {
+    const response = await request<{ products?: Product[]; total?: number }>('/api/v1/products?page=1&page_size=100')
+    return { products: list(response.products).map(product => ({ ...product, available: product.available ?? 0 })), total: response.total ?? 0 }
+  },
+  orders: async () => {
+    const response = await request<{ items?: Order[]; total?: number }>('/api/v1/orders?page=1&page_size=100')
+    return { items: list(response.items), total: response.total ?? 0 }
+  },
   order: (id: string) => request<Order>(`/api/v1/orders/${id}`),
-  orderActivities: (id: string) => request<Array<{ id: string; order_id: string; event_type: string; occurred_at: string }>>(`/api/v1/activities?order_id=${id}`),
-  createOrder: (items: { product_id: string; quantity: number }[], payment_scenario: string) => request<Order>('/api/v1/orders', { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify({ items, payment_scenario }) }),
-  notifications: () => request<{ items: Notification[]; total: number }>('/api/v1/notifications?page=1&page_size=100'),
-  unreadNotifications: () => request<{ count: number }>('/api/v1/notifications/unread-count'),
-  markNotificationRead: (id: string) => request<Notification>(`/api/v1/notifications/${id}/read`, { method: 'PATCH' }),
+  createOrder: (items: { product_id: string; quantity: number }[], payment_scenario: string) =>
+    request<Order>('/api/v1/orders', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      body: JSON.stringify({ items, payment_scenario }),
+    }),
+  orderActivities: async (id: string) =>
+    list(await request<OrderActivity[]>(`/api/v1/activities?order_id=${encodeURIComponent(id)}`)),
+
+  notifications: async () => {
+    const response = await request<{ items?: Notification[]; total?: number }>('/api/v1/notifications?page=1&page_size=100')
+    return { items: list(response.items), total: response.total ?? 0 }
+  },
+  unreadNotifications: async () => {
+    const response = await request<{ count?: number }>('/api/v1/notifications/unread-count')
+    return { count: response.count ?? 0 }
+  },
+  markNotificationRead: (id: string) =>
+    request<Notification>(`/api/v1/notifications/${id}/read`, { method: 'PATCH' }),
+  markAllNotificationsRead: () =>
+    request<void>('/api/v1/notifications/read-all', { method: 'POST', body: JSON.stringify({}) }),
+
+  reservations: async () => {
+    const response = await request<{ reservations?: Reservation[]; total?: number }>('/api/v1/admin/inventory/reservations')
+    return { reservations: list(response.reservations), total: response.total ?? 0 }
+  },
+  payments: async () => {
+    const response = await request<{ payments?: Payment[]; total?: number }>('/api/v1/admin/payments')
+    return { payments: list(response.payments), total: response.total ?? 0 }
+  },
+  orderSummary: () => request<OrderSummary>('/api/v1/admin/analytics/orders/summary'),
+  orderFunnel: () => request<OrderFunnel>('/api/v1/admin/analytics/orders/funnel'),
+  adminOrderActivities: async () => {
+    const response = await request<{ items?: OrderActivity[]; total?: number }>('/api/v1/admin/activities/orders')
+    return { items: list(response.items), total: response.total ?? 0 }
+  },
+  gatewayHealth: () => request<{ status: string }>('/health/ready'),
+
+  // Legacy Task API remains callable for study and rollback compatibility, but is not the portfolio default.
+  tasks: () => request<{ items: Task[] }>('/api/v1/tasks?page=1&page_size=100'),
+  createTask: (payload: Pick<Task, 'title' | 'description'>) =>
+    request<Task>('/api/v1/tasks', { method: 'POST', body: JSON.stringify(payload) }),
+  updateTask: (id: string, payload: Pick<Task, 'title' | 'description' | 'status'>) =>
+    request<Task>(`/api/v1/tasks/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteTask: (id: string) => request<void>(`/api/v1/tasks/${id}`, { method: 'DELETE' }),
+  legacyAnalyticsSummary: () => request<AnalyticsSummary>('/api/v1/analytics/summary'),
+  legacyAnalyticsTimeseries: () =>
+    request<{ points: TimeseriesPoint[]; generated_at: string; data_through: string }>('/api/v1/analytics/timeseries'),
+  legacyAnalyticsStatuses: () =>
+    request<{ statuses: StatusCount[]; generated_at: string; data_through: string }>('/api/v1/analytics/statuses'),
 }

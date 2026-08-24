@@ -9,7 +9,7 @@ import (
 )
 
 func TestOpenAPIContainsPublicPaths(t *testing.T) {
-	for _, p := range []string{"/healthz", "/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/auth/logout", "/api/v1/tasks", "/api/v1/activities", "/api/v1/analytics/summary", "/api/v1/analytics/timeseries", "/api/v1/analytics/statuses"} {
+	for _, p := range []string{"/healthz", "/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/auth/logout", "/api/v1/tasks", "/api/v1/products", "/api/v1/orders", "/api/v1/notifications/read-all", "/api/v1/admin/activities/orders", "/api/v1/admin/inventory/reservations", "/api/v1/admin/payments", "/api/v1/admin/analytics/orders/summary", "/api/v1/admin/analytics/orders/funnel"} {
 		if !strings.Contains(openAPI, p) {
 			t.Fatalf("openapi missing %s", p)
 		}

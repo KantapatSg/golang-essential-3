@@ -73,11 +73,19 @@ try {
   $swaggerContent = (& $curl.Source -fsS "$base/swagger/") -join "`n"
   if ($swaggerContent -notmatch 'SwaggerUIBundle') { throw 'Swagger UI is not served' }
   $openapiContent = (& $curl.Source -fsS "$base/openapi.yaml") -join "`n"
-  foreach ($path in @('/api/v1/auth/logout','/api/v1/activities','/api/v1/analytics/summary')) {
+  foreach ($path in @(
+    '/api/v1/auth/logout',
+    '/api/v1/orders',
+    '/api/v1/notifications/read-all',
+    '/api/v1/admin/activities/orders',
+    '/api/v1/admin/inventory/reservations',
+    '/api/v1/admin/payments',
+    '/api/v1/admin/analytics/orders/summary'
+  )) {
     if ($openapiContent.IndexOf($path, [System.StringComparison]::Ordinal) -lt 0) { throw "OpenAPI is missing $path" }
   }
   $frontendContent = (& $curl.Source -fsS 'http://localhost:3000/') -join "`n"
-  if ($frontendContent -notmatch 'signal ledger') { throw 'frontend landing page is not served' }
+  if ($frontendContent -notmatch 'Order Relay') { throw 'Order-first frontend landing page is not served' }
   $frontendOpenapi = (& $curl.Source -fsS 'http://localhost:3000/openapi.yaml') -join "`n"
   if ($frontendOpenapi.IndexOf('/api/v1/auth/logout', [System.StringComparison]::Ordinal) -lt 0) { throw 'frontend proxy does not expose OpenAPI' }
   $grafanaReady = $false
@@ -117,6 +125,20 @@ try {
     throw 'order analytics summary did not include all acceptance outcomes'
   }
 
+  $adminOrders = Invoke-RestMethod "$base/api/v1/orders?page=1&page_size=100" -Headers $headers
+  if (@($adminOrders.items | Where-Object { $_.id -eq $success.id }).Count -ne 1) {
+    throw 'admin Order view did not include the member happy-path order'
+  }
+  $reservations = Invoke-RestMethod "$base/api/v1/admin/inventory/reservations" -Headers $headers
+  if (@($reservations.reservations).Count -lt 2) { throw 'Inventory reservations are not visible to admin' }
+  $payments = Invoke-RestMethod "$base/api/v1/admin/payments" -Headers $headers
+  if (@($payments.payments).Count -lt 2) { throw 'Payment outcomes are not visible to admin' }
+  $orderActivities = Invoke-RestMethod "$base/api/v1/admin/activities/orders" -Headers $headers
+  if (@($orderActivities.items).Count -lt 3) { throw 'admin Order activity projection is empty' }
+
+  $notifications = Invoke-RestMethod "$base/api/v1/notifications?page=1&page_size=100" -Headers $memberHeaders
+  if (@($notifications.items).Count -lt 3) { throw 'member Notification projection did not receive Order outcomes' }
+
   $targetsReady = $false
   $down = @()
   for ($i = 0; $i -lt 30; $i++) {
@@ -133,6 +155,18 @@ try {
   if ([int64]$rows -lt 1) { throw 'ClickHouse has no projected events' }
   $orderRows = (& docker compose -f deploy/docker-compose.yml exec -T clickhouse clickhouse-client --query "SELECT count() FROM analytics.order_events FINAL").Trim()
   if ([int64]$orderRows -lt 3) { throw 'ClickHouse has no projected order events' }
+
+  if ($env:RUN_BROWSER_E2E -eq '1') {
+    Push-Location frontend
+    try {
+      $env:PLAYWRIGHT_BASE_URL = 'http://127.0.0.1:3000'
+      $env:E2E_REAL_BACKEND = '1'
+      & npm run e2e
+      if ($LASTEXITCODE -ne 0) { throw 'browser Order workflows failed' }
+    } finally {
+      Pop-Location
+    }
+  }
   Write-Host "compose acceptance ok task_events=$rows order_events=$orderRows success=$($success.id) decline=$($declined.id) out_of_stock=$($outOfStock.id)"
 } catch {
   Write-Host 'compose acceptance failed; collecting focused diagnostics'

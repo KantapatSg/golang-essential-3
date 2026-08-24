@@ -1,15 +1,114 @@
-import { render, screen } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
-import { Landing, Login, Analytics, Tasks } from './pages'
-import { State } from './components'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { AuthProvider } from './auth'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { vi } from 'vitest'
-import { getAccessToken } from './api'
+import { afterEach, vi } from 'vitest'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { AuthProvider } from './auth'
+import { getAccessToken, setAccessToken } from './api'
+import { State } from './components'
+import { Landing, LegacyTasks, Login, Notifications, OrderAnalytics, Orders, Products } from './pages'
 
-test('landing explains the system thesis', () => { render(<MemoryRouter><Landing /></MemoryRouter>); expect(screen.getByText(/Trace the work/i)).toBeInTheDocument(); expect(screen.getByText(/LIVE ARCHITECTURE/i)).toBeInTheDocument() })
-test('error state is announced accessibly', () => { render(<State kind="error" text="Reader unavailable" />); expect(screen.getByRole('alert')).toHaveTextContent('Reader unavailable') })
-test('login submits credentials and stores access in memory', async () => { const fetchMock=vi.spyOn(globalThis,'fetch').mockImplementation(async (input,init)=>{ const url=String(input); if(url.includes('/refresh')) return new Response('',{status:401}); if(url.includes('/login')) return Response.json({access_token:'a',user_id:'u1',role:'member',token_type:'Bearer',expires_in:900}); return Response.json({}) }); const user=userEvent.setup();render(<MemoryRouter><AuthProvider><Login/></AuthProvider></MemoryRouter>);await user.click(screen.getByRole('button',{name:/sign in/i}));expect(getAccessToken()).toBe('a');expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/login'),expect.objectContaining({method:'POST'}));fetchMock.mockRestore() })
-test('task status control calls update endpoint', async () => { const fetchMock=vi.spyOn(globalThis,'fetch').mockImplementation(async (input,init)=>{ const url=String(input);if(url.includes('/tasks?')) return Response.json({items:[{id:'t1',owner_id:'u1',title:'Ship',description:'',status:'todo',created_at:'',updated_at:''}]});return Response.json({id:'t1',owner_id:'u1',title:'Ship',description:'',status:'doing',created_at:'',updated_at:''}) }); const client=new QueryClient({defaultOptions:{queries:{retry:false}}});const user=userEvent.setup();render(<MemoryRouter><QueryClientProvider client={client}><Tasks/></QueryClientProvider></MemoryRouter>);const select=await screen.findByRole('combobox');await user.selectOptions(select,'doing');expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/tasks/t1'),expect.objectContaining({method:'PUT'}));fetchMock.mockRestore() })
-test('analytics renders populated projection metrics and chart data', async () => { const fetchMock=vi.spyOn(globalThis,'fetch').mockImplementation(async input=>{ const url=String(input);if(url.includes('summary')) return Response.json({total_events:6,created:3,updated:2,deleted:1,data_through:'2026-01-01T00:00:00Z',generated_at:'2026-01-01T00:00:00Z'});if(url.includes('timeseries')) return Response.json({points:[{day:'2026-01-01',created:3,updated:2,deleted:1}],data_through:'',generated_at:''});return Response.json({statuses:[{status:'done',count:4}],data_through:'',generated_at:''}) });const client=new QueryClient({defaultOptions:{queries:{retry:false}}});render(<MemoryRouter><QueryClientProvider client={client}><Analytics/></QueryClientProvider></MemoryRouter>);expect(await screen.findByText('6')).toBeInTheDocument();expect(await screen.findByText('done')).toBeInTheDocument();expect(screen.getByText(/eventual/)).toBeInTheDocument();fetchMock.mockRestore() })
+function testClient() {
+  return new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } })
+}
+
+function renderWithData(ui: React.ReactNode, path = '/app') {
+  const client = testClient()
+  return render(<MemoryRouter initialEntries={[path]}><QueryClientProvider client={client}>{ui}</QueryClientProvider></MemoryRouter>)
+}
+
+afterEach(() => {
+  vi.restoreAllMocks()
+  setAccessToken(null)
+})
+
+test('landing presents Order Management and its sync/async boundaries', () => {
+  render(<MemoryRouter><Landing /></MemoryRouter>)
+  expect(screen.getByRole('heading', { name: /One order.*Every boundary visible/i })).toBeInTheDocument()
+  expect(screen.getByText('Fiber REST')).toBeInTheDocument()
+  expect(screen.getByText('gRPC')).toBeInTheDocument()
+  expect(screen.getByText('Kafka')).toBeInTheDocument()
+  expect(screen.getByText('ClickHouse')).toBeInTheDocument()
+})
+
+test('error state is announced accessibly', () => {
+  render(<State kind="error" text="Order service unavailable" />)
+  expect(screen.getByRole('alert')).toHaveTextContent('Order service unavailable')
+})
+
+test('login submits credentials and stores access in memory', async () => {
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+    const url = String(input)
+    if (url.includes('/refresh')) return new Response('', { status: 401 })
+    if (url.includes('/login')) return Response.json({ access_token: 'access', user_id: 'member-1', role: 'member', token_type: 'Bearer', expires_in: 900 })
+    return Response.json({})
+  })
+  const user = userEvent.setup()
+  render(<MemoryRouter><AuthProvider><Login /></AuthProvider></MemoryRouter>)
+  await user.click(screen.getByRole('button', { name: /sign in/i }))
+  expect(getAccessToken()).toBe('access')
+  expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/auth/login'), expect.objectContaining({ method: 'POST' }))
+})
+
+test('member builds an order and is routed to its live detail', async () => {
+  const orderID = 'order-12345678'
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const url = String(input)
+    if (url.includes('/products')) return Response.json({ products: [{ id: 'prod-desk', name: 'Standing Desk', unit_price_minor: 25000, currency: 'USD', available: 4 }], total: 1 })
+    if (url.endsWith('/api/v1/orders') && init?.method === 'POST') return Response.json({ id: orderID, customer_id: 'member-1', items: [], total: { amount_minor: 25000, currency: 'USD' }, status: 'PENDING', payment_scenario: 'success', reason: '', created_at: '2026-08-24T00:00:00Z', updated_at: '2026-08-24T00:00:00Z' })
+    return Response.json({})
+  })
+  const user = userEvent.setup()
+  renderWithData(<Routes><Route path="/app/products" element={<Products />} /><Route path="/app/orders/:id" element={<h1>Live order detail</h1>} /></Routes>, '/app/products')
+
+  await user.click(await screen.findByRole('button', { name: 'Increase Standing Desk' }))
+  await user.click(screen.getByRole('button', { name: /Send into workflow/i }))
+  expect(await screen.findByRole('heading', { name: 'Live order detail' })).toBeInTheDocument()
+  const createCall = fetchMock.mock.calls.find(([input, init]) => String(input).endsWith('/api/v1/orders') && init?.method === 'POST')
+  expect(createCall?.[1]).toEqual(expect.objectContaining({ method: 'POST', body: JSON.stringify({ items: [{ product_id: 'prod-desk', quantity: 1 }], payment_scenario: 'success' }) }))
+})
+
+test('order list renders the terminal state produced by the async workflow', async () => {
+  vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ items: [{ id: 'order-confirmed', customer_id: 'member-1', items: [{ product_id: 'prod-desk', name: 'Desk', quantity: 1, unit_price: { amount_minor: 25000, currency: 'USD' }, line_total: { amount_minor: 25000, currency: 'USD' } }], total: { amount_minor: 25000, currency: 'USD' }, status: 'CONFIRMED', payment_scenario: 'success', reason: '', created_at: '2026-08-24T00:00:00Z', updated_at: '2026-08-24T00:00:01Z' }], total: 1 }))
+  renderWithData(<Orders />, '/app/orders')
+  expect(await screen.findByRole('link', { name: /Inspect/i })).toHaveAttribute('href', '/app/orders/order-confirmed')
+  expect(screen.getAllByText('CONFIRMED').length).toBeGreaterThan(1)
+})
+
+test('notification projection can mark an order signal as read', async () => {
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const url = String(input)
+    if (url.includes('/notifications/n-1/read') && init?.method === 'PATCH') return Response.json({})
+    return Response.json({ items: [{ id: 'n-1', user_id: 'member-1', order_id: 'order-1', type: 'ORDER_CONFIRMED', message: 'Order confirmed', read: false, created_at: '2026-08-24T00:00:00Z' }], total: 1 })
+  })
+  const user = userEvent.setup()
+  renderWithData(<Notifications />, '/app/notifications')
+  await user.click(await screen.findByRole('button', { name: 'Mark read' }))
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/notifications/n-1/read'), expect.objectContaining({ method: 'PATCH' })))
+})
+
+test('admin analytics renders ClickHouse summary and event funnel', async () => {
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
+    const url = String(input)
+    if (url.includes('/summary')) return Response.json({ created: 8, confirmed: 5, rejected: 1, cancelled: 2, revenue_minor: 125000, currency: 'USD', through: '2026-08-24T00:00:00Z' })
+    return Response.json({ created: 8, reserved: 7, paid: 5, confirmed: 5, rejected: 1, cancelled: 2, through: '2026-08-24T00:00:00Z' })
+  })
+  renderWithData(<OrderAnalytics />, '/app/admin/analytics')
+  expect(await screen.findByText('$1,250.00')).toBeInTheDocument()
+  expect(screen.getByText('Conversion path')).toBeInTheDocument()
+  expect(screen.getByText('Reserved')).toBeInTheDocument()
+})
+
+test('legacy Task CRUD remains available only on the compatibility route', async () => {
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const url = String(input)
+    if (url.includes('/tasks?')) return Response.json({ items: [{ id: 'task-1', owner_id: 'member-1', title: 'Legacy task', description: '', status: 'todo', created_at: '', updated_at: '' }] })
+    if (url.includes('/tasks/task-1') && init?.method === 'PUT') return Response.json({})
+    return Response.json({})
+  })
+  const user = userEvent.setup()
+  renderWithData(<LegacyTasks />, '/app/legacy/tasks')
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'Status for Legacy task' }), 'doing')
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/tasks/task-1'), expect.objectContaining({ method: 'PUT' })))
+  expect(screen.getByText(/active portfolio use case is Order Management/i)).toBeInTheDocument()
+})

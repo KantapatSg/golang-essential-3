@@ -178,6 +178,7 @@ func (g *gateway) routes(app *fiber.App) {
 	protected.Get("/analytics/statuses", g.analyticsStatuses)
 	protected.Get("/admin/analytics/orders/summary", g.orderSummary)
 	protected.Get("/admin/analytics/orders/funnel", g.orderFunnel)
+	protected.Get("/admin/activities/orders", g.listOrderActivities)
 	protected.Get("/admin/inventory/reservations", g.listReservations)
 	protected.Get("/admin/payments", g.listPayments)
 	app.Get("/openapi.yaml", func(c *fiber.Ctx) error { c.Type("yaml"); return c.SendString(openAPI) })
@@ -199,6 +200,7 @@ func (g *gateway) login(c *fiber.Ctx) error {
 	if e != nil {
 		return grpcHTTP(c, e)
 	}
+	setRefreshCookie(c, r.RefreshToken)
 	return c.JSON(r)
 }
 func (g *gateway) refresh(c *fiber.Ctx) error {
@@ -218,12 +220,17 @@ func (g *gateway) refresh(c *fiber.Ctx) error {
 	if e != nil {
 		return grpcHTTP(c, e)
 	}
-	// Refresh credentials are session secrets: prefer an HttpOnly cookie so browser
-	// JavaScript cannot exfiltrate them. JSON is retained for non-browser API clients.
-	if r.RefreshToken != "" {
-		c.Cookie(&fiber.Cookie{Name: "refresh_token", Value: r.RefreshToken, HTTPOnly: true, Secure: env("COOKIE_SECURE", "false") == "true", SameSite: "Lax", Path: "/api/v1/auth", Domain: env("COOKIE_DOMAIN", ""), MaxAge: int(7 * 24 * time.Hour.Seconds())})
-	}
+	setRefreshCookie(c, r.RefreshToken)
 	return c.JSON(r)
+}
+
+func setRefreshCookie(c *fiber.Ctx, token string) {
+	if token == "" {
+		return
+	}
+	// Refresh token เป็น session secret: cookie แบบ HttpOnly ทำให้ browser refresh ได้หลัง reload
+	// โดยไม่เปิด token ให้ JavaScript อ่านหรือส่งต่อผิด boundary
+	c.Cookie(&fiber.Cookie{Name: "refresh_token", Value: token, HTTPOnly: true, Secure: env("COOKIE_SECURE", "false") == "true", SameSite: "Lax", Path: "/api/v1/auth", Domain: env("COOKIE_DOMAIN", ""), MaxAge: int(7 * 24 * time.Hour.Seconds())})
 }
 func (g *gateway) logout(c *fiber.Ctx) error {
 	var b refreshBody
@@ -445,6 +452,18 @@ func (g *gateway) orderFunnel(c *fiber.Ctx) error {
 		return grpcHTTP(c, e)
 	}
 	return c.JSON(r)
+}
+func (g *gateway) listOrderActivities(c *fiber.Ctx) error {
+	if e := adminOnly(c); e != nil {
+		return e
+	}
+	ctx, cancel := rpcCtx(c)
+	defer cancel()
+	r, e := g.orderActivity.ListOrderActivities(withActor(ctx, c), &activityorder.ListOrderActivitiesRequest{Page: 1, PageSize: 100})
+	if e != nil {
+		return grpcHTTP(c, e)
+	}
+	return c.JSON(fiber.Map{"items": r.Activities, "total": r.Total})
 }
 func (g *gateway) listReservations(c *fiber.Ctx) error {
 	if e := adminOnly(c); e != nil {
