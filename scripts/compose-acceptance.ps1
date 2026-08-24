@@ -30,6 +30,44 @@ try {
   }
   if (-not $smokePassed) { throw 'basic smoke test failed' }
 
+  $member = Invoke-RestMethod "$base/api/v1/auth/login" -Method Post -ContentType 'application/json' -Body (@{ email='member@example.com'; password='member123' } | ConvertTo-Json)
+  $memberHeaders = @{ Authorization = "Bearer $($member.access_token)" }
+  $products = Invoke-RestMethod "$base/api/v1/products" -Headers $memberHeaders
+  if (@($products.products).Count -lt 2) { throw 'inventory catalog did not return sellable products' }
+
+  function New-Order([string]$productId, [string]$scenario, [string]$key) {
+    $headers = @{ Authorization = "Bearer $($member.access_token)"; 'Idempotency-Key' = $key }
+    $body = @{ items = @(@{ product_id = $productId; quantity = 1 }); payment_scenario = $scenario } | ConvertTo-Json -Depth 5
+    Invoke-RestMethod "$base/api/v1/orders" -Method Post -Headers $headers -ContentType 'application/json' -Body $body
+  }
+
+  function Wait-OrderTerminal([string]$id) {
+    for ($attempt = 0; $attempt -lt 30; $attempt++) {
+      $order = Invoke-RestMethod "$base/api/v1/orders/$id" -Headers $memberHeaders
+      if ($order.status -in @('CONFIRMED', 'CANCELLED', 'REJECTED')) { return $order }
+      Start-Sleep -Seconds 1
+    }
+    throw "order $id did not reach a terminal state"
+  }
+
+  $success = New-Order 'prod-mug' 'success' ([guid]::NewGuid().ToString())
+  if ($success.status -ne 'PENDING') { throw "order did not return PENDING: $($success.status)" }
+  $successFinal = Wait-OrderTerminal $success.id
+  if ($successFinal.status -ne 'CONFIRMED') { throw "happy path ended as $($successFinal.status)" }
+
+  $declined = New-Order 'prod-coffee' 'decline' ([guid]::NewGuid().ToString())
+  $declinedFinal = Wait-OrderTerminal $declined.id
+  if ($declinedFinal.status -ne 'CANCELLED') { throw "payment decline ended as $($declinedFinal.status)" }
+
+  $outOfStock = New-Order 'prod-shirt' 'success' ([guid]::NewGuid().ToString())
+  $outOfStockFinal = Wait-OrderTerminal $outOfStock.id
+  if ($outOfStockFinal.status -ne 'REJECTED') { throw "out-of-stock ended as $($outOfStockFinal.status)" }
+
+  $idempotencyKey = [guid]::NewGuid().ToString()
+  $first = New-Order 'prod-mug' 'success' $idempotencyKey
+  $second = New-Order 'prod-mug' 'success' $idempotencyKey
+  if ($first.id -ne $second.id) { throw 'idempotency retry created a second order' }
+
   $admin = Invoke-RestMethod "$base/api/v1/auth/login" -Method Post -ContentType 'application/json' -Body (@{ email='admin@example.com'; password='admin123' } | ConvertTo-Json)
   $headers = @{ Authorization = "Bearer $($admin.access_token)" }
   $swaggerContent = (& $curl.Source -fsS "$base/swagger/") -join "`n"
@@ -74,6 +112,11 @@ try {
   }
   if (-not $analyticsReady) { throw 'analytics projection did not become visible' }
 
+  $orderSummary = Invoke-RestMethod "$base/api/v1/admin/analytics/orders/summary" -Headers $headers
+  if ($orderSummary.created -lt 3 -or $orderSummary.confirmed -lt 1 -or $orderSummary.cancelled -lt 1 -or $orderSummary.rejected -lt 1) {
+    throw 'order analytics summary did not include all acceptance outcomes'
+  }
+
   $targetsReady = $false
   $down = @()
   for ($i = 0; $i -lt 30; $i++) {
@@ -88,7 +131,9 @@ try {
 
   $rows = (& docker compose -f deploy/docker-compose.yml exec -T clickhouse clickhouse-client --query "SELECT count() FROM analytics.task_events FINAL").Trim()
   if ([int64]$rows -lt 1) { throw 'ClickHouse has no projected events' }
-  Write-Host "compose acceptance ok events=$rows"
+  $orderRows = (& docker compose -f deploy/docker-compose.yml exec -T clickhouse clickhouse-client --query "SELECT count() FROM analytics.order_events FINAL").Trim()
+  if ([int64]$orderRows -lt 3) { throw 'ClickHouse has no projected order events' }
+  Write-Host "compose acceptance ok task_events=$rows order_events=$orderRows success=$($success.id) decline=$($declined.id) out_of_stock=$($outOfStock.id)"
 } catch {
   Write-Host 'compose acceptance failed; collecting focused diagnostics'
   & docker compose -f deploy/docker-compose.yml ps
