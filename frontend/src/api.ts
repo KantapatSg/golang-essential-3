@@ -33,6 +33,7 @@ export const api = {
   products: () => request<{ products: Product[]; total: number }>('/api/v1/products?page=1&page_size=100'),
   orders: () => request<{ items: Order[]; total: number }>('/api/v1/orders?page=1&page_size=100'),
   order: (id: string) => request<Order>(`/api/v1/orders/${id}`),
+  orderActivities: (id: string) => request<Array<{ id: string; order_id: string; event_type: string; occurred_at: string }>>(`/api/v1/activities?order_id=${id}`),
   createOrder: (items: { product_id: string; quantity: number }[], payment_scenario: string) => request<Order>('/api/v1/orders', { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify({ items, payment_scenario }) }),
   notifications: () => request<{ items: Notification[]; total: number }>('/api/v1/notifications?page=1&page_size=100'),
   unreadNotifications: () => request<{ count: number }>('/api/v1/notifications/unread-count'),

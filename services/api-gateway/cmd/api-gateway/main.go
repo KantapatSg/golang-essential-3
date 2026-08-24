@@ -471,6 +471,15 @@ func (g *gateway) listPayments(c *fiber.Ctx) error {
 	return c.JSON(r)
 }
 func (g *gateway) listActivities(c *fiber.Ctx) error {
+	if orderID := c.Query("order_id"); orderID != "" && g.orderActivity != nil {
+		ctx, cancel := rpcCtx(c)
+		defer cancel()
+		r, e := g.orderActivity.ListOrderActivities(withActor(ctx, c), &activityorder.ListOrderActivitiesRequest{OrderId: orderID, Page: 1, PageSize: 100})
+		if e != nil {
+			return grpcHTTP(c, e)
+		}
+		return c.JSON(r.Activities)
+	}
 	// Activity log เป็นข้อมูลรวมของระบบ จึงจำกัดให้ admin แม้ JWT จะผ่านแล้ว
 	// การตรวจ policy ที่ edge ช่วยตอบ 403 ได้เร็ว ก่อนยิง RPC ไปอีก service
 	if role, _ := c.Locals("role").(string); role != "admin" {
