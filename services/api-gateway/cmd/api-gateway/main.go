@@ -132,6 +132,7 @@ func main() {
 		AllowOrigins:     env("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173"),
 		AllowCredentials: true,
 		AllowHeaders:     "Origin, Content-Type, Accept, Authorization, X-Request-ID",
+		ExposeHeaders:    "X-Cache-Status, X-Request-ID",
 	}))
 	app.Use(requestID)
 	app.Get("/health/live", func(c *fiber.Ctx) error { return c.JSON(fiber.Map{"status": "ok"}) })
@@ -356,9 +357,13 @@ func (g *gateway) deleteTask(c *fiber.Ctx) error {
 func (g *gateway) listProducts(c *fiber.Ctx) error {
 	ctx, cancel := rpcCtx(c)
 	defer cancel()
-	r, e := g.inventory.ListProducts(ctx, &inventoryv1.ListProductsRequest{Page: 1, PageSize: 100})
+	var headers metadata.MD
+	r, e := g.inventory.ListProducts(withActor(ctx, c), &inventoryv1.ListProductsRequest{Page: 1, PageSize: 100}, grpc.Header(&headers))
 	if e != nil {
 		return grpcHTTP(c, e)
+	}
+	if values := headers.Get("x-cache-status"); len(values) > 0 {
+		c.Set("X-Cache-Status", values[0])
 	}
 	return c.JSON(fiber.Map{"products": r.Products, "total": r.Total})
 }

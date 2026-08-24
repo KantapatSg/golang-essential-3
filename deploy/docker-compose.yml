@@ -84,9 +84,10 @@ services:
     ports: ["127.0.0.1:50052:50052"]
   inventory-service:
     build: { context: .., dockerfile: deploy/Dockerfile, args: { SERVICE: inventory-service } }
-    environment: { INVENTORY_ADDR: ":50055", INVENTORY_HTTP_ADDR: ":9106", INVENTORY_DB_DSN: "postgres://app:app@postgres:5432/inventory_db?sslmode=disable", KAFKA_BROKERS: "kafka:9092" }
+    environment: { INVENTORY_ADDR: ":50055", INVENTORY_HTTP_ADDR: ":9106", INVENTORY_DB_DSN: "postgres://app:app@postgres:5432/inventory_db?sslmode=disable", REDIS_ADDR: "redis:6379", KAFKA_BROKERS: "kafka:9092" }
     depends_on:
       postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
       kafka-init: { condition: service_completed_successfully }
     ports: ["127.0.0.1:50055:50055"]
   order-service:

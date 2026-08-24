@@ -122,3 +122,27 @@ docker compose -f deploy/docker-compose.yml config --quiet # passed before/after
 The running stack was not restarted or re-seeded during P2 to avoid mutating retained baseline
 fixtures. P7 will rebuild only service images and run a unique acceptance `run_id`, then verify
 restart persistence against the additive Inventory database.
+
+## P3 — Redis catalog cache
+
+**Status:** **Focused implementation complete; live/browser cache proof remains for P7.**
+
+- Inventory now uses a versioned catalog key (`catalog:v1:list:all`) with a 60-second cache-aside
+  TTL. PostgreSQL/memory remains the source of truth; cache errors fall back to the source.
+- gRPC responses include `x-cache-status` (`HIT`, `MISS`, or `BYPASS`), and Gateway exposes it as
+  `X-Cache-Status` with CORS `ExposeHeaders` for the portfolio UI.
+- Stock adjustment/reserve/release/consume paths invalidate the catalog only after their mutation
+  transaction succeeds. Redis is optional for catalog availability and is not coupled to Identity
+  session fail-closed behavior.
+- Low-cardinality Prometheus counters cover hits, misses, bypasses, errors, and invalidations;
+  no order/customer/token values enter cache keys or metric labels.
+
+**Focused verification:**
+
+```text
+$env:SKIP_FRONTEND="1"; powershell -ExecutionPolicy Bypass -File scripts/test.ps1  # passed
+docker compose -f deploy/docker-compose.yml config --quiet                         # passed
+```
+
+P7 will exercise MISS -> HIT, post-adjustment invalidation -> MISS, and Redis-down BYPASS against
+a unique acceptance run while retaining the existing Redis volume.

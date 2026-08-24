@@ -12,11 +12,13 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/KantapatSg/golang-essential-3/contracts"
 	inventoryv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/inventory/v1"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/kafka-go"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -40,11 +42,17 @@ type inventoryServer struct {
 	processed    map[string]bool
 	stockKeys    map[string]stockAdjustment
 	db           *gorm.DB
+	redis        *redis.Client
 }
 type stockAdjustment struct {
 	hash string
 	out  *inventoryv1.AdjustStockResponse
 }
+
+const catalogCacheKey = "catalog:v1:list:all"
+
+var cacheHits, cacheMisses, cacheBypasses, cacheErrors, cacheInvalidations atomic.Uint64
+
 type reservation struct {
 	ID, OrderID, ProductID, Status, Reason string
 	Quantity                               int32
@@ -108,10 +116,45 @@ type compensationPayload struct {
 	PaymentScenario string `json:"payment_scenario,omitempty"`
 }
 
-func (s *inventoryServer) ListProducts(_ context.Context, req *inventoryv1.ListProductsRequest) (*inventoryv1.ListProductsResponse, error) {
-	if s.db != nil {
-		return s.listInventoryDB(req)
+func (s *inventoryServer) ListProducts(ctx context.Context, req *inventoryv1.ListProductsRequest) (*inventoryv1.ListProductsResponse, error) {
+	cacheStatus := "BYPASS"
+	if s.redis != nil {
+		if b, err := s.redis.Get(ctx, catalogCacheKey).Bytes(); err == nil {
+			var cached inventoryv1.ListProductsResponse
+			if json.Unmarshal(b, &cached) == nil {
+				cacheHits.Add(1)
+				cacheStatus = "HIT"
+				_ = grpc.SetHeader(ctx, metadata.Pairs("x-cache-status", cacheStatus))
+				return &cached, nil
+			}
+			cacheErrors.Add(1)
+		} else if errors.Is(err, redis.Nil) {
+			cacheMisses.Add(1)
+		} else {
+			cacheErrors.Add(1)
+		}
+	} else {
+		cacheBypasses.Add(1)
 	}
+	var out *inventoryv1.ListProductsResponse
+	var err error
+	if s.db != nil {
+		out, err = s.listInventoryDB(req)
+	} else {
+		out, err = s.listProductsMemory(req)
+	}
+	if err == nil && s.redis != nil {
+		if b, marshalErr := json.Marshal(out); marshalErr == nil && s.redis.Set(ctx, catalogCacheKey, b, 60*time.Second).Err() == nil {
+			cacheStatus = "MISS"
+		} else {
+			cacheErrors.Add(1)
+			cacheStatus = "BYPASS"
+		}
+	}
+	_ = grpc.SetHeader(ctx, metadata.Pairs("x-cache-status", cacheStatus))
+	return out, err
+}
+func (s *inventoryServer) listProductsMemory(req *inventoryv1.ListProductsRequest) (*inventoryv1.ListProductsResponse, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	page, size := int(req.GetPage()), int(req.GetPageSize())
@@ -285,6 +328,7 @@ func (s *inventoryServer) AdjustStock(ctx context.Context, req *inventoryv1.Adju
 	if err != nil {
 		return nil, err
 	}
+	s.invalidateCatalog(ctx)
 	return &result, nil
 }
 func (s *inventoryServer) adjustStockMemory(req *inventoryv1.AdjustStockRequest) (*inventoryv1.AdjustStockResponse, error) {
@@ -314,6 +358,7 @@ func (s *inventoryServer) adjustStockMemory(req *inventoryv1.AdjustStockRequest)
 	m := &inventoryv1.StockMovement{Id: uuid.NewString(), ProductId: p.id, Delta: req.GetDelta(), Reason: req.GetReason(), BalanceAfter: p.available, IdempotencyKey: req.GetIdempotencyKey(), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
 	out := &inventoryv1.AdjustStockResponse{Product: toProto(p), Movement: m}
 	s.stockKeys[req.GetIdempotencyKey()] = stockAdjustment{hash: hash, out: out}
+	s.invalidateCatalog(context.Background())
 	return out, nil
 }
 func (s *inventoryServer) ListStockMovements(ctx context.Context, req *inventoryv1.ListStockMovementsRequest) (*inventoryv1.ListStockMovementsResponse, error) {
@@ -339,6 +384,16 @@ func dbProductProto(row inventoryProductRow) *inventoryv1.Product {
 }
 func dbMovementProto(row stockMovementRow) *inventoryv1.StockMovement {
 	return &inventoryv1.StockMovement{Id: row.ID, ProductId: row.ProductID, Delta: row.Delta, Reason: row.Reason, BalanceAfter: row.BalanceAfter, IdempotencyKey: row.IdempotencyKey, CreatedAt: row.CreatedAt.Format(time.RFC3339)}
+}
+func (s *inventoryServer) invalidateCatalog(ctx context.Context) {
+	if s.redis == nil {
+		return
+	}
+	if err := s.redis.Del(ctx, catalogCacheKey).Err(); err != nil {
+		cacheErrors.Add(1)
+		return
+	}
+	cacheInvalidations.Add(1)
 }
 func (s *inventoryServer) reserve(e contracts.Envelope) (contracts.Envelope, error) {
 	var p createdPayload
@@ -374,6 +429,7 @@ func (s *inventoryServer) reserve(e contracts.Envelope) (contracts.Envelope, err
 		s.reservations[id] = reservation{ID: id, OrderID: p.Order.ID, ProductID: item.ProductID, Quantity: item.Quantity, Status: "RESERVED", CreatedAt: time.Now().UTC()}
 	}
 	s.processed[e.EventID] = true
+	s.invalidateCatalog(context.Background())
 	return s.outcome(e, p.Order.CustomerID, "InventoryReserved", "", p.Order.TotalMinor, p.Order.Currency, p.Order.PaymentScenario), nil
 }
 func (s *inventoryServer) reserveDB(e contracts.Envelope, p createdPayload) (contracts.Envelope, error) {
@@ -421,6 +477,7 @@ func (s *inventoryServer) reserveDB(e contracts.Envelope, p createdPayload) (con
 	if err != nil {
 		return contracts.Envelope{}, err
 	}
+	s.invalidateCatalog(context.Background())
 	return out, nil
 }
 func (s *inventoryServer) release(e contracts.Envelope) (contracts.Envelope, error) {
@@ -452,6 +509,7 @@ func (s *inventoryServer) release(e contracts.Envelope) (contracts.Envelope, err
 		}
 	}
 	s.processed[e.EventID] = true
+	s.invalidateCatalog(context.Background())
 	return s.outcome(e, p.CustomerID, "InventoryReleased", "", 0, "", ""), nil
 }
 func (s *inventoryServer) releaseDB(e contracts.Envelope, p compensationPayload) (contracts.Envelope, error) {
@@ -492,6 +550,7 @@ func (s *inventoryServer) releaseDB(e contracts.Envelope, p compensationPayload)
 	if err != nil {
 		return contracts.Envelope{}, err
 	}
+	s.invalidateCatalog(context.Background())
 	return out, nil
 }
 func (s *inventoryServer) consumeReservation(e contracts.Envelope) (contracts.Envelope, error) {
@@ -520,6 +579,7 @@ func (s *inventoryServer) consumeReservation(e contracts.Envelope) (contracts.En
 		}
 	}
 	s.processed[e.EventID] = true
+	s.invalidateCatalog(context.Background())
 	return s.outcome(e, p.CustomerID, contracts.EventInventoryConsumed, "", 0, p.Currency, ""), nil
 }
 func (s *inventoryServer) consumeReservationDB(e contracts.Envelope, p compensationPayload) (contracts.Envelope, error) {
@@ -561,6 +621,7 @@ func (s *inventoryServer) consumeReservationDB(e contracts.Envelope, p compensat
 	if err != nil {
 		return contracts.Envelope{}, err
 	}
+	s.invalidateCatalog(context.Background())
 	return out, nil
 }
 func (s *inventoryServer) createInventoryOutbox(tx *gorm.DB, out contracts.Envelope, aggregateID string) error {
@@ -650,7 +711,7 @@ func health(ctx context.Context, addr string) {
 	mux.HandleFunc("/health/ready", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) })
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-		_, _ = w.Write([]byte("# HELP service_ready Whether the service can accept traffic.\n# TYPE service_ready gauge\nservice_ready 1\n"))
+		_, _ = w.Write([]byte(fmt.Sprintf("# HELP service_ready Whether the service can accept traffic.\n# TYPE service_ready gauge\nservice_ready 1\n# TYPE inventory_catalog_cache_hits_total counter\ninventory_catalog_cache_hits_total %d\n# TYPE inventory_catalog_cache_misses_total counter\ninventory_catalog_cache_misses_total %d\n# TYPE inventory_catalog_cache_bypasses_total counter\ninventory_catalog_cache_bypasses_total %d\n# TYPE inventory_catalog_cache_errors_total counter\ninventory_catalog_cache_errors_total %d\n# TYPE inventory_catalog_cache_invalidations_total counter\ninventory_catalog_cache_invalidations_total %d\n", cacheHits.Load(), cacheMisses.Load(), cacheBypasses.Load(), cacheErrors.Load(), cacheInvalidations.Load())))
 	})
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() { <-ctx.Done(); _ = srv.Shutdown(context.Background()) }()
@@ -712,6 +773,9 @@ func main() {
 		if err = seedInventoryDB(db); err != nil {
 			log.Fatal(err)
 		}
+	}
+	if addr := strings.TrimSpace(os.Getenv("REDIS_ADDR")); addr != "" {
+		s.redis = redis.NewClient(&redis.Options{Addr: addr})
 	}
 	lis, err := net.Listen("tcp", env("INVENTORY_ADDR", ":50055"))
 	if err != nil {
