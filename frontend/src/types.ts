@@ -6,3 +6,7 @@ export type TokenResponse = { access_token: string; refresh_token?: string; toke
 export type AnalyticsSummary = { total_events: number; created: number; updated: number; deleted: number; generated_at: string; data_through: string }
 export type TimeseriesPoint = { day: string; created: number; updated: number; deleted: number }
 export type StatusCount = { status: string; count: number }
+export type Product = { id: string; name: string; unit_price_minor: number; currency: string; available: number }
+export type OrderItem = { product_id: string; name: string; quantity: number; unit_price: { amount_minor: number; currency: string }; line_total: { amount_minor: number; currency: string } }
+export type Order = { id: string; customer_id: string; items: OrderItem[]; total: { amount_minor: number; currency: string }; status: string; payment_scenario: string; reason: string; created_at: string; updated_at: string }
+export type Notification = { id: string; user_id: string; order_id: string; type: string; message: string; read: boolean; created_at: string }

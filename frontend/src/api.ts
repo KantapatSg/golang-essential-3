@@ -1,4 +1,4 @@
-import type { Activity, AnalyticsSummary, StatusCount, Task, TimeseriesPoint, TokenResponse } from './types'
+import type { Activity, AnalyticsSummary, StatusCount, Task, TimeseriesPoint, TokenResponse, Product, Order, Notification } from './types'
 
 let accessToken: string | null = null
 // ใช้ relative URL ใน local Compose เพื่อให้ Nginx ทำ same-origin proxy และใช้
@@ -30,4 +30,11 @@ export const api = {
   analyticsTimeseries: () => request<{ points: TimeseriesPoint[]; generated_at: string; data_through: string }>('/api/v1/analytics/timeseries'),
   analyticsStatuses: () => request<{ statuses: StatusCount[]; generated_at: string; data_through: string }>('/api/v1/analytics/statuses'),
   gatewayHealth: () => request<{ status: string }>('/health/ready'),
+  products: () => request<{ products: Product[]; total: number }>('/api/v1/products?page=1&page_size=100'),
+  orders: () => request<{ items: Order[]; total: number }>('/api/v1/orders?page=1&page_size=100'),
+  order: (id: string) => request<Order>(`/api/v1/orders/${id}`),
+  createOrder: (items: { product_id: string; quantity: number }[], payment_scenario: string) => request<Order>('/api/v1/orders', { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify({ items, payment_scenario }) }),
+  notifications: () => request<{ items: Notification[]; total: number }>('/api/v1/notifications?page=1&page_size=100'),
+  unreadNotifications: () => request<{ count: number }>('/api/v1/notifications/unread-count'),
+  markNotificationRead: (id: string) => request<Notification>(`/api/v1/notifications/${id}/read`, { method: 'PATCH' }),
 }
