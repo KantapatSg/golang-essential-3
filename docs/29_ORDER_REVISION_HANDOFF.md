@@ -2,7 +2,7 @@
 
 > Updated: 2026-08-24 (Asia/Bangkok)
 >
-> สถานะ revision: **R0-R10 passed; R11 CI/tag closeout in progress**
+> สถานะ revision: **R0-R11 passed; R12 Render held**
 >
 > Runtime baseline: Task/Activity/Analytics บน `main`, tag `v0.1.0-predeploy`; revision runtime
 > อยู่บน branch `codex/order-platform-revision` และผ่าน local R10 acceptance แล้ว
@@ -116,7 +116,7 @@ Critical invariants:
 | R8 Observability | Passed | `2349ea4` | Prometheus/Grafana targets/alerts |
 | R9 Quality/Recovery | Passed | `8ee2e2b` | test/vet/build and recovery checks |
 | R10 Local acceptance | Passed | `1304c6b` | Compose acceptance exit 0 |
-| R11 GitHub/tag | In progress | CI run `32693374593` | verify CI, tag after success |
+| R11 GitHub/tag | Passed | CI run `32694549379`; tag `v0.2.0-order-predeploy` | stop before R12 |
 | R12 Render | HOLD | none | ต้องมีคำสั่งใหม่หลัง R11 |
 
 อัปเดตตารางนี้ทุกครั้งที่จบ Phase พร้อม commit SHA และลิงก์/ตำแหน่ง evidence

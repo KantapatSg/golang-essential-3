@@ -15,7 +15,7 @@ This ledger records the revision evidence without rewriting the Task baseline. T
 | R7-R8 | Passed | Frontend lint/test/build and observability configuration; commits `94bdd30`, `2349ea4`, `ba2a24f`, `264b1d9` |
 | R9 | Passed | `scripts/test.ps1`, `scripts/vet.ps1`, `scripts/build.ps1`, `docker compose ... config`; commit `8ee2e2b` |
 | R10 | Passed | `SKIP_BUILD=1 pwsh -NoProfile -File scripts/compose-acceptance.ps1` exited 0; commit `1304c6b` |
-| R11 | In progress | Branch pushed to `origin`; GitHub Actions run `32693374593` |
+| R11 | Passed | Branch/tag pushed; GitHub Actions run `32694549379` green; tag `v0.2.0-order-predeploy` |
 
 ## R10 scenario result
 

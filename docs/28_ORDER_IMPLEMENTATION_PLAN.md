@@ -1,6 +1,6 @@
 # Order Platform Revision — Implementation Plan
 
-> สถานะ: **R0-R10 ผ่าน local evidence; R11 CI/tag อยู่ระหว่างปิดงาน**
+> สถานะ: **R0-R11 ผ่าน; R12 Render ถูก hold ตาม scope**
 >
 > แผนนี้ใช้สำหรับเปลี่ยน `golang-essential-3` จาก Task demo ไปเป็น Order Processing Platform
 > โดยรักษา `main` และ tag `v0.1.0-predeploy` เป็น baseline ที่ย้อนกลับได้ ห้ามลบ schema,
@@ -54,7 +54,7 @@
 | R8 | Prometheus, Grafana และ alerts | Passed — `2349ea4` |
 | R9 | Security, failure recovery และ quality gates | Passed — `8ee2e2b` |
 | R10 | Full local acceptance + migration cutover readiness | Passed — `1304c6b` |
-| R11 | Public GitHub, CI และ pre-deploy tag | In progress — CI run `32693374593` |
+| R11 | Public GitHub, CI และ pre-deploy tag | Passed — CI run `32694549379`, tag `v0.2.0-order-predeploy` |
 | R12 | Render deployment | **HOLD — ไม่ทำจนกว่าจะสั่ง** |
 
 ## 5. Phase Details
