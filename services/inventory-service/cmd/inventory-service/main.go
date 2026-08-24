@@ -24,6 +24,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -345,9 +346,9 @@ func (s *inventoryServer) adjustStockMemory(req *inventoryv1.AdjustStockRequest)
 		if prior.hash != hash {
 			return nil, status.Error(codes.AlreadyExists, "idempotency key payload mismatch")
 		}
-		copy := *prior.out
-		copy.Replayed = true
-		return &copy, nil
+		replayed := proto.Clone(prior.out).(*inventoryv1.AdjustStockResponse)
+		replayed.Replayed = true
+		return replayed, nil
 	}
 	p, ok := s.products[req.GetProductId()]
 	if !ok {
