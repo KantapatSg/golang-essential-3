@@ -349,11 +349,13 @@ func (s *orderServer) applyOutcome(ctx context.Context, e contracts.Envelope) (c
 			return contracts.Envelope{}, err
 		}
 		next, err := state.Transition(row.Status, e.EventType)
-		if err != nil || next == row.Status {
+		if err != nil || (next == row.Status && e.EventType != "PaymentFailed") {
 			return contracts.Envelope{}, err
 		}
-		if err := s.db.WithContext(ctx).Model(&orderRow{}).Where("id = ?", p.OrderID).Updates(map[string]interface{}{"status": next, "reason": p.Reason, "updated_at": time.Now().UTC()}).Error; err != nil {
-			return contracts.Envelope{}, err
+		if next != row.Status {
+			if err := s.db.WithContext(ctx).Model(&orderRow{}).Where("id = ?", p.OrderID).Updates(map[string]interface{}{"status": next, "reason": p.Reason, "updated_at": time.Now().UTC()}).Error; err != nil {
+				return contracts.Envelope{}, err
+			}
 		}
 	} else {
 		s.mu.Lock()
@@ -363,11 +365,13 @@ func (s *orderServer) applyOutcome(ctx context.Context, e contracts.Envelope) (c
 			return contracts.Envelope{}, nil
 		}
 		next, err := state.Transition(row.Status, e.EventType)
-		if err != nil || next == row.Status {
+		if err != nil || (next == row.Status && e.EventType != "PaymentFailed") {
 			s.mu.Unlock()
 			return contracts.Envelope{}, err
 		}
-		row.Status, row.Reason, row.UpdatedAt = next, p.Reason, time.Now().UTC()
+		if next != row.Status {
+			row.Status, row.Reason, row.UpdatedAt = next, p.Reason, time.Now().UTC()
+		}
 		s.mu.Unlock()
 	}
 	if e.EventType == "PaymentFailed" {
@@ -405,13 +409,14 @@ func (s *orderServer) consumeOutcomes(ctx context.Context, brokers string) {
 		if err != nil {
 			continue
 		}
-		processed[e.EventID] = true
 		if out.EventID != "" {
 			b, _ := json.Marshal(out)
 			if err := writer.WriteMessages(ctx, kafka.Message{Key: []byte(out.EventID), Value: b}); err != nil {
 				log.Printf("release publish retry event=%s: %v", out.EventID, err)
+				continue
 			}
 		}
+		processed[e.EventID] = true
 	}
 }
 func openDB(ctx context.Context, dsn string) (*gorm.DB, error) {
