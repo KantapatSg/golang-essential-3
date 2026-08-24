@@ -9,4 +9,4 @@ CREATE TABLE IF NOT EXISTS analytics.order_events
 )
 ENGINE = ReplacingMergeTree(occurred_at)
 ORDER BY (order_id, event_id)
-TTL occurred_at + INTERVAL 180 DAY;
+TTL toDateTime(occurred_at) + INTERVAL 180 DAY;
