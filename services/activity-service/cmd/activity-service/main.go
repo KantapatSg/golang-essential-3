@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/KantapatSg/golang-essential-3/contracts"
 	activityv1 "github.com/KantapatSg/golang-essential-3/contracts/gen/go/activity/v1"
 	"github.com/google/uuid"
 	"github.com/segmentio/kafka-go"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -119,10 +121,99 @@ func (processedEvent) TableName() string { return "processed_events" }
 
 type activityServer struct {
 	activityv1.UnimplementedActivityServiceServer
+	activityv1.UnimplementedOrderActivityServiceServer
 	mu    sync.RWMutex
 	items []activity
 	seen  map[string]struct{}
 	db    *gorm.DB
+}
+
+func (s *activityServer) ListOrderActivities(ctx context.Context, req *activityv1.ListOrderActivitiesRequest) (*activityv1.ListOrderActivitiesResponse, error) {
+	actor, role := actorFromContext(ctx)
+	orderID := req.GetOrderId()
+	if s.db != nil {
+		var rows []activityRow
+		q := s.db.WithContext(ctx).Where("task_id = ?", orderID)
+		if role != "admin" {
+			q = q.Where("actor_id = ?", actor)
+		}
+		if e := q.Order("occurred_at asc").Find(&rows).Error; e != nil {
+			return nil, status.Error(codes.Internal, e.Error())
+		}
+		out := make([]*activityv1.OrderActivity, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, &activityv1.OrderActivity{Id: r.ID, OrderId: r.TaskID, EventType: r.EventType, OccurredAt: r.OccurredAt.Format(time.RFC3339)})
+		}
+		return &activityv1.ListOrderActivitiesResponse{Activities: out, Total: int32(len(out))}, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := []*activityv1.OrderActivity{}
+	for _, r := range s.items {
+		if r.TaskID != orderID || (role != "admin" && r.ActorID != actor) {
+			continue
+		}
+		out = append(out, &activityv1.OrderActivity{Id: r.ID, OrderId: r.TaskID, EventType: r.EventType, OccurredAt: r.OccurredAt.Format(time.RFC3339)})
+	}
+	return &activityv1.ListOrderActivitiesResponse{Activities: out, Total: int32(len(out))}, nil
+}
+func actorFromContext(ctx context.Context) (string, string) {
+	md, _ := metadata.FromIncomingContext(ctx)
+	id, role := "", "member"
+	if x := md.Get("x-user-id"); len(x) > 0 {
+		id = x[0]
+	}
+	if x := md.Get("x-user-role"); len(x) > 0 {
+		role = x[0]
+	}
+	return id, role
+}
+
+func (s *activityServer) recordOrderEvent(ctx context.Context, e contracts.Envelope) error {
+	if e.EventID == "" || e.OrderID == "" {
+		return errors.New("invalid order event")
+	}
+	if s.db != nil {
+		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := tx.Create(&processedEvent{EventID: e.EventID, ProcessedAt: time.Now().UTC()}).Error; err != nil {
+				var x processedEvent
+				if tx.First(&x, "event_id = ?", e.EventID).Error == nil {
+					return nil
+				}
+				return err
+			}
+			return tx.Create(&activityRow{ID: uuid.NewString(), EventID: e.EventID, EventType: e.EventType, TaskID: e.OrderID, ActorID: e.CustomerID, OccurredAt: e.OccurredAt}).Error
+		})
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.seen[e.EventID]; ok {
+		return nil
+	}
+	s.seen[e.EventID] = struct{}{}
+	s.items = append(s.items, activity{ID: uuid.NewString(), EventID: e.EventID, EventType: e.EventType, TaskID: e.OrderID, ActorID: e.CustomerID, OccurredAt: e.OccurredAt})
+	return nil
+}
+func (s *activityServer) consumeOrders(ctx context.Context, brokers string) {
+	if strings.TrimSpace(brokers) == "" {
+		return
+	}
+	r := kafka.NewReader(kafka.ReaderConfig{Brokers: strings.Split(brokers, ","), Topic: contracts.OrderEventsTopic, GroupID: "activity-order-v1", MinBytes: 1, MaxBytes: 10 << 20, StartOffset: kafka.FirstOffset, WatchPartitionChanges: true, PartitionWatchInterval: time.Second})
+	defer r.Close()
+	for {
+		m, e := r.FetchMessage(ctx)
+		if e != nil {
+			return
+		}
+		var env contracts.Envelope
+		if json.Unmarshal(m.Value, &env) != nil || env.Validate() != nil {
+			continue
+		}
+		if e = s.recordOrderEvent(ctx, env); e != nil {
+			continue
+		}
+		_ = r.CommitMessages(ctx, m)
+	}
 }
 
 func (s *activityServer) ListActivities(ctx context.Context, _ *activityv1.ListActivitiesRequest) (*activityv1.ListActivitiesResponse, error) {
@@ -280,8 +371,10 @@ func main() {
 	})
 	// Kafka consumer ทำงานเป็น background goroutine และรับ context เดียวกับ service lifecycle
 	go s.consume(ctx, os.Getenv("KAFKA_BROKERS"))
+	go s.consumeOrders(ctx, os.Getenv("KAFKA_BROKERS"))
 	g := grpc.NewServer()
 	activityv1.RegisterActivityServiceServer(g, s)
+	activityv1.RegisterOrderActivityServiceServer(g, s)
 	go func() { <-ctx.Done(); g.GracefulStop() }()
 	log.Printf("activity-service listening on %s", lis.Addr())
 	if e = g.Serve(lis); e != nil && !errors.Is(e, grpc.ErrServerStopped) {

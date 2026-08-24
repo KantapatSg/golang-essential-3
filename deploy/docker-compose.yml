@@ -105,6 +105,17 @@ services:
     environment: { PAYMENT_ADDR: ":50057", PAYMENT_HTTP_ADDR: ":9108", KAFKA_BROKERS: "kafka:9092" }
     depends_on: { kafka-init: { condition: service_completed_successfully } }
     ports: ["127.0.0.1:50057:50057"]
+  notification-service:
+    build: { context: .., dockerfile: deploy/Dockerfile, args: { SERVICE: notification-service } }
+    environment:
+      NOTIFICATION_ADDR: ":50058"
+      NOTIFICATION_HTTP_ADDR: ":9109"
+      NOTIFICATION_DB_DSN: "postgres://app:app@postgres:5432/notification_db?sslmode=disable"
+      KAFKA_BROKERS: "kafka:9092"
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka-init: { condition: service_completed_successfully }
+    ports: ["127.0.0.1:50058:50058"]
   activity-service:
     build: { context: .., dockerfile: deploy/Dockerfile, args: { SERVICE: activity-service } }
     environment:
