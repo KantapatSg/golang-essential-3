@@ -209,6 +209,10 @@ func health(ctx context.Context, addr string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health/live", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) })
 	mux.HandleFunc("/health/ready", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) })
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+		_, _ = w.Write([]byte("# HELP service_ready Whether the service can accept traffic.\n# TYPE service_ready gauge\nservice_ready 1\n"))
+	})
 	srv := &http.Server{Addr: addr, Handler: mux}
 	go func() { <-ctx.Done(); _ = srv.Shutdown(context.Background()) }()
 	go func() {
